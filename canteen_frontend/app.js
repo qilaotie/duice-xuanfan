@@ -85,9 +85,9 @@
         const primary = window.CANTEEN_API_ORIGIN;
         if (window.location.hostname !== 'qilaotie.github.io' || !primary) return false;
 
-        async function responds(url) {
+        async function responds(url, timeoutMs) {
             const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 4500);
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
             try {
                 const response = await fetch(url, { signal: controller.signal, cache: 'no-store' });
                 return response.ok && (await response.json()).ok === true;
@@ -98,8 +98,8 @@
             }
         }
 
-        if (await responds(primary + '/api/health')) return false;
-        if (await responds(backup + 'api/health')) {
+        if (await responds(primary + '/api/health', 2000)) return false;
+        if (await responds(backup + 'api/health', 4500)) {
             window.location.replace(backup);
             return true;
         }
