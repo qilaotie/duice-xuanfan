@@ -64,7 +64,7 @@
 
     document.addEventListener('DOMContentLoaded', init);
 
-    function init() {
+    async function init() {
         restoreAuth();
 
         if (window.location.protocol === 'file:') {
@@ -74,9 +74,44 @@
 
         bindEvents();
         setInitialLoading();
+        if (await useBackupIfNeeded()) return;
         loadCategories().catch(() => {});
         loadCanteens().catch(() => {});
         loadRanking().catch(() => {});
+    }
+
+    async function useBackupIfNeeded() {
+        const backup = 'https://duice-xuanfan.pages.dev/';
+        const primary = window.CANTEEN_API_ORIGIN;
+        if (window.location.hostname !== 'qilaotie.github.io' || !primary) return false;
+
+        async function responds(url) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 4500);
+            try {
+                const response = await fetch(url, { signal: controller.signal, cache: 'no-store' });
+                return response.ok && (await response.json()).ok === true;
+            } catch {
+                return false;
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+
+        if (await responds(primary + '/api/health')) return false;
+        if (await responds(backup + 'api/health')) {
+            window.location.replace(backup);
+            return true;
+        }
+        const notice = document.createElement('div');
+        notice.className = 'file-tip';
+        notice.textContent = '暂时无法连接食堂服务。';
+        const link = document.createElement('a');
+        link.href = backup;
+        link.textContent = '尝试打开备用站';
+        notice.append(link);
+        $('.site-header').after(notice);
+        return false;
     }
 
     /* ---------------- 基础工具 ---------------- */
