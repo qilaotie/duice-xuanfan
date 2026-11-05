@@ -17,3 +17,5 @@ node_modules/
 *.log
 /.codex-remote-attachments/
 /preview/
+.wrangler-cli-path
+/*.private.sql

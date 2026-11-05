@@ -15,10 +15,14 @@ python -m flask --app app run --no-debug --host 127.0.0.1 --port 5000
 
 打开 http://127.0.0.1:5000/ 。新数据库会从空的档口目录开始。需要初始化管理员时，在执行初始化命令前设置环境变量 `CANTEEN_ADMIN_PASSWORD`，长度为 12 至 100 个字符。已有管理员使用数据库里保存的密码。
 
-## 后续云部署
+## 云部署
 
-计划由 GitHub Pages 发布 `canteen_frontend/`，Cloudflare Workers 提供 API，D1 保存业务数据。目前代码运行在 Flask 和 SQLite 上，迁移后再启用 Pages 发布。
+GitHub Pages 发布 `canteen_frontend/`，Cloudflare Worker 提供 API，D1 保存业务数据和压缩后的 JPEG 照片。使用本地 Flask 时，前端继续从同一来源请求 API。
 
-迁移时需要把前端的相对 API 和图片路径接到 Worker 地址，在 Worker 上配置 Pages 来源的跨域访问，并把 Flask 数据访问改为 D1 查询。现有数据库可按需要单独迁移，先确定是否保留账号、评价和图片，再生成导入数据。
+1. 用 Wrangler 登录 Cloudflare，运行 `npx wrangler d1 create duice-xuanfan`，把数据库 ID 填进 `cloudflare/wrangler.jsonc` 的 `database_id`。
+2. 在仓库根目录运行 `npx wrangler d1 migrations apply DB --remote --config cloudflare/wrangler.jsonc`。
+3. 如需保留已有数据，用 `python cloudflare/export_sqlite.py canteen_backend/instance/canteen.db <临时文件路径.sql>` 导出数据，再运行 `npx wrangler d1 execute DB --remote --config cloudflare/wrangler.jsonc --file <临时文件路径.sql>`。仅向空库导入一次。导出保留密码哈希，清除旧登录令牌，导入文件应放在仓库外。
+4. 运行 `npx wrangler deploy --config cloudflare/wrangler.jsonc`。用 Worker 的 `/api/health` 验证数据库绑定。
+5. 在 GitHub 仓库 Actions variables 中设置 `CANTEEN_API_ORIGIN` 为 Worker 的 HTTPS 源地址。在 Pages 中选择 GitHub Actions，然后运行 `Deploy GitHub Pages`。如果使用其他域名，更新 Wrangler 配置里的 `PAGES_ORIGIN`。
 
 本地 SQLite、管理员密码文件和本机截图均排除在 Git 提交之外。

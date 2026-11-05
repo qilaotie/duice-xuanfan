@@ -1,0 +1,16 @@
+{
+  "name": "duice-xuanfan",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-11-05",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "PAGES_ORIGIN": "https://qilaotie.github.io"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "duice-xuanfan",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ]
+}

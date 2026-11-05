@@ -206,7 +206,7 @@
 
         let response;
         try {
-            response = await fetch(path, {
+            response = await fetch((window.CANTEEN_API_ORIGIN || '') + path, {
                 method,
                 headers,
                 body: multipart || body === undefined ? body : JSON.stringify(body)
@@ -1049,7 +1049,31 @@
     }
 
     function photoImage(url, alt, className = 'detail-photo') {
-        return url ? `<img class="${className}" src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" loading="lazy">` : '';
+        return url ? `<img class="${className}" src="${escapeHtml((window.CANTEEN_API_ORIGIN || '') + url)}" alt="${escapeHtml(alt)}" loading="lazy">` : '';
+    }
+
+    async function preparePhoto(photo) {
+        if (!window.CANTEEN_API_ORIGIN) return photo;
+        if (photo.size > 5 * 1024 * 1024) throw new Error('照片不能超过 5 MB');
+        let image;
+        try {
+            image = await createImageBitmap(photo);
+            const canvas = document.createElement('canvas');
+            const ratio = Math.min(1, 1400 / Math.max(image.width, image.height));
+            canvas.width = Math.max(1, Math.round(image.width * ratio));
+            canvas.height = Math.max(1, Math.round(image.height * ratio));
+            const context = canvas.getContext('2d');
+            context.fillStyle = '#fff';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.drawImage(image, 0, 0, canvas.width, canvas.height);
+            const jpeg = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+            if (!jpeg || jpeg.size > 1_500_000) throw new Error();
+            return new File([jpeg], 'photo.jpg', { type: 'image/jpeg' });
+        } catch {
+            throw new Error('无法处理这张照片，请换一张 JPEG、PNG 或 WebP 图片');
+        } finally {
+            image?.close();
+        }
     }
 
     function photoControls(kind, item) {
@@ -1067,9 +1091,9 @@
         const detailId = state.detailId;
         const { photoKind, id } = control.dataset;
         const body = photo ? new FormData() : undefined;
-        if (photo) body.append('photo', photo);
         control.disabled = true;
         try {
+            if (photo) body.append('photo', await preparePhoto(photo));
             await api(`/api/admin/photos/${photoKind}/${id}`, { method: photo ? 'PUT' : 'DELETE', body });
             if (state.detailId === detailId) await openDetail(detailId);
             toast(photo ? '照片已保存' : '照片已移除');
@@ -1433,7 +1457,7 @@
             if (photo) {
                 body = new FormData();
                 body.append('rating', JSON.stringify(rating));
-                body.append('photo', photo);
+                body.append('photo', await preparePhoto(photo));
             }
             const path = reviewId ? `/api/ratings/${reviewId}` : '/api/ratings';
             await api(path, { method: reviewId ? 'PATCH' : 'POST', body });

@@ -1,0 +1,290 @@
+import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
+import { admin } from './admin.mjs';
+
+const derive = promisify(scrypt);
+const sensitive = value => /脏话|恶意|攻击/.test(value);
+const json = (data, status = 200) => Response.json(data, { status });
+const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
+const photoUrl = (table, row) => row.has_photo ? `/api/photos/${table}/${row.id}` : null;
+const now = () => new Date().toISOString().replace('T', ' ').slice(0, 23);
+const minute = value => value?.slice(0, 16) ?? null;
+const getText = (value, max, label) => {
+    if (typeof value !== 'string' || value.trim().length > max) fail(400, label + '格式无效');
+    return value.trim();
+};
+const active = 'is_deleted = 0';
+const history = (q, id) => q(`INSERT INTO rating_history (canteen_id, avg_score, rating_count, created_at)
+    SELECT ?, AVG(score), COUNT(*), ? FROM ratings WHERE canteen_id = ? AND ${active}`, id, now(), id);
+
+async function passwordHash(password, salt = randomBytes(12).toString('hex')) {
+    const key = await derive(password, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+    return 'scrypt:32768:8:1$' + salt + '$' + key.toString('hex');
+}
+
+async function body(request) {
+    try {
+        const value = await request.json();
+        if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    } catch {}
+    fail(400, '请求格式无效');
+}
+
+async function form(request) {
+    if (Number(request.headers.get('content-length')) > 6_000_000) fail(413, '照片过大');
+    try { return await request.formData(); } catch { fail(400, '上传格式无效'); }
+}
+
+async function photoBytes(upload) {
+    if (!upload || typeof upload === 'string' || !upload.size) return null;
+    if (upload.size > 1_500_000) fail(413, '照片处理后不能超过 1.5 MB');
+    const data = await upload.arrayBuffer();
+    const bytes = new Uint8Array(data);
+    if (bytes[0] !== 255 || bytes[1] !== 216 || bytes.at(-2) !== 255 || bytes.at(-1) !== 217) {
+        fail(400, '请上传 JPEG 照片');
+    }
+    return data;
+}
+
+function nickname(value) {
+    const name = getText(value, 24, '昵称');
+    if (sensitive(name) || /[\p{Cc}\p{Cf}]/u.test(name)) fail(400, '昵称包含不合规字符');
+    return name || null;
+}
+
+function score(value) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 1 || value > 5) fail(400, '评分须为 1 到 5 分');
+    return value;
+}
+
+function decodeScores(value) {
+    return JSON.parse(value || 'null') || [];
+}
+
+const stallsSql = `SELECT c.id,c.name,c.category_id,g.name category_name,c.is_active,
+    ROUND(AVG(r.score),2) score, COUNT(r.id) rating_count
+    FROM canteens c LEFT JOIN categories g ON g.id=c.category_id
+    LEFT JOIN ratings r ON r.canteen_id=c.id AND r.is_deleted=0`;
+
+async function route(request, env) {
+    const path = new URL(request.url).pathname;
+    const method = request.method;
+    const q = (sql, ...args) => args.length ? env.DB.prepare(sql).bind(...args) : env.DB.prepare(sql);
+    const first = (sql, ...args) => q(sql, ...args).first();
+    const all = async (sql, ...args) => (await q(sql, ...args).all()).results;
+    const batch = statements => env.DB.batch(statements);
+    const token = /^Bearer ([a-f0-9]{32})$/.exec(request.headers.get('Authorization') || '')?.[1];
+    const viewer = token ? await first('SELECT id, username, nickname, is_admin FROM users WHERE token=?', token) : null;
+    const auth = () => { if (!viewer) fail(401, '请先登录'); return viewer; };
+
+    if (method === 'GET' && path === '/api/health') {
+        await first('SELECT 1 FROM categories LIMIT 1');
+        return json({ ok: true });
+    }
+    if (method === 'POST' && ['/api/register', '/api/login'].includes(path)) {
+        const data = await body(request);
+        const username = getText(data.username, 50, '账号');
+        const password = getText(data.password, 100, '密码');
+        if (!username || !password) fail(400, '账号和密码不能为空');
+        let user = await first('SELECT * FROM users WHERE username=?', username);
+        if (path === '/api/register') {
+            if (typeof data.confirm_password !== 'string' || data.confirm_password.trim() !== password) fail(400, '两次输入的密码不一致');
+            if (user || username.toLowerCase() === 'admin') fail(409, '该账号已注册，请登录');
+            const name = nickname(data.nickname ?? '');
+            user = await first(`INSERT INTO users (username,password,is_admin,token,nickname)
+                VALUES (?,?,0,?,?) ON CONFLICT(username) DO NOTHING RETURNING *`,
+                username, await passwordHash(password), randomBytes(16).toString('hex'), name);
+            if (!user) fail(409, '该账号已注册，请登录');
+        } else {
+            if (!user) fail(401, '账号不存在或密码错误');
+            const [scheme, salt] = user.password.split('$');
+            if (scheme !== 'scrypt:32768:8:1') fail(401, '账号不存在或密码错误');
+            const computed = Buffer.from(await passwordHash(password, salt));
+            const stored = Buffer.from(user.password);
+            if (computed.length !== stored.length || !timingSafeEqual(computed, stored)) fail(401, '账号不存在或密码错误');
+            if (!user.token) {
+                user = await first('UPDATE users SET token=COALESCE(token,?) WHERE id=? RETURNING *',
+                    randomBytes(16).toString('hex'), user.id);
+            }
+        }
+        return json({ token: user.token, nickname: user.nickname, is_admin: Boolean(user.is_admin) });
+    }
+
+    if (path === '/api/profile' && ['GET', 'PATCH'].includes(method)) {
+        const user = auth();
+        if (method === 'PATCH') {
+            user.nickname = nickname((await body(request)).nickname);
+            await q('UPDATE users SET nickname=? WHERE id=?', user.nickname, user.id).run();
+        }
+        return json({ nickname: user.nickname });
+    }
+
+    if (method === 'GET' && path === '/api/categories') return json(await all('SELECT * FROM categories ORDER BY id'));
+    if (method === 'GET' && path === '/api/canteens') {
+        return json(await all(stallsSql + ' WHERE c.is_active=1 GROUP BY c.id ORDER BY c.category_id,c.name'));
+    }
+    if (method === 'GET' && path === '/api/stalls/ranking') {
+        const rows = await all(stallsSql + ' WHERE c.is_active=1 GROUP BY c.id HAVING COUNT(r.id)>0 ORDER BY score DESC,c.id');
+        return json(rows.map(row => ({ ...row, avg_score: row.score })));
+    }
+
+    let match = /^\/api\/canteens\/(\d+)(\/dishes)?$/.exec(path);
+    if (method === 'GET' && match) {
+        const id = Number(match[1]);
+        const [stallResult, dishResult, ratingResult, historyResult] = await batch([
+            q(`SELECT c.id,c.name,c.category_id,g.name category_name,c.photo IS NOT NULL has_photo
+                FROM canteens c LEFT JOIN categories g ON g.id=c.category_id WHERE c.id=?`, id),
+            q('SELECT id,name,photo IS NOT NULL has_photo FROM dishes WHERE canteen_id=? ORDER BY name', id),
+            q(`SELECT r.id,r.user_id,u.nickname,r.score,r.comment,r.created_at,r.dish_name,r.dish_scores,
+                r.photo IS NOT NULL has_photo FROM ratings r JOIN users u ON u.id=r.user_id
+                WHERE r.canteen_id=? AND r.is_deleted=0 ORDER BY r.created_at DESC,r.id DESC`, id),
+            q('SELECT created_at,avg_score,rating_count FROM rating_history WHERE canteen_id=? ORDER BY created_at', id)
+        ].slice(0, match[2] ? 2 : 4));
+        const stall = stallResult.results[0];
+        if (!stall) fail(404, '档口不存在');
+        const dishes = dishResult.results.map(dish => ({ id: dish.id, name: dish.name, photo_url: photoUrl('dishes', dish) }));
+        if (match[2]) return json(dishes);
+        const scores = new Map();
+        const comments = ratingResult.results.map(row => {
+            const dishScores = decodeScores(row.dish_scores);
+            for (const dish of dishScores) {
+                if (!scores.has(dish.id)) scores.set(dish.id, []);
+                scores.get(dish.id).push(dish.score);
+            }
+            return { id: row.id, user: row.nickname || '匿名同学', is_mine: viewer?.id === row.user_id,
+                content: row.comment, score: row.score, created_at: minute(row.created_at), dish_name: row.dish_name,
+                dish_scores: dishScores, photo_url: photoUrl('ratings', row) };
+        });
+        const mean = values => values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) * 100 / values.length) / 100 : null;
+        for (const dish of dishes) {
+            const values = scores.get(dish.id) || [];
+            dish.score = mean(values);
+            dish.rating_count = values.length;
+        }
+        return json({ ...stall, score: mean(comments.map(row => row.score)), comments, dishes,
+            photo_url: photoUrl('canteens', stall),
+            history: historyResult.results.map(row => ({ ...row, date: minute(row.created_at) })) });
+    }
+
+    match = /^\/api\/photos\/(canteens|dishes|ratings)\/(\d+)$/.exec(path);
+    if (method === 'GET' && match) {
+        const [, kind, id] = match;
+        const row = await first(`SELECT photo FROM ${kind} WHERE id=?${kind === 'ratings' ? ' AND is_deleted=0' : ''}`, Number(id));
+        if (!row?.photo) fail(404, '照片不存在');
+        return new Response(new Uint8Array(row.photo), { headers: { 'Content-Type': 'image/jpeg', 'X-Content-Type-Options': 'nosniff' } });
+    }
+
+    if (method === 'GET' && path === '/api/my/ratings') {
+        return json(await all(`SELECT r.id,r.canteen_id,c.name canteen_name,g.name category_name,
+            r.comment content,r.score,substr(r.created_at,1,16) created_at
+            FROM ratings r JOIN canteens c ON c.id=r.canteen_id LEFT JOIN categories g ON g.id=c.category_id
+            WHERE r.user_id=? AND r.is_deleted=0 ORDER BY r.created_at DESC,r.id DESC`, auth().id));
+    }
+
+    match = /^\/api\/ratings\/(\d+)$/.exec(path);
+    if ((match && ['PATCH', 'DELETE'].includes(method)) || (path === '/api/ratings' && method === 'POST')) {
+        const user = auth();
+        const id = match ? Number(match[1]) : null;
+        const existing = id ? await first('SELECT id,canteen_id,dish_name FROM ratings WHERE id=? AND user_id=? AND is_deleted=0', id, user.id) : null;
+        if (id && !existing) fail(404, '评价不存在');
+        if (method === 'DELETE') {
+            await batch([
+                q('DELETE FROM reports WHERE comment_id=?', id),
+                q('DELETE FROM ratings WHERE id=? AND user_id=? AND is_deleted=0', id, user.id),
+                history(q, existing.canteen_id)
+            ]);
+            return json({ msg: '评价已撤回' });
+        }
+        let data, photo;
+        if (request.headers.get('content-type')?.startsWith('multipart/form-data')) {
+            const fields = await form(request);
+            try { data = JSON.parse(fields.get('rating')); } catch { fail(400, '评价格式无效'); }
+            photo = await photoBytes(fields.get('photo'));
+        } else data = await body(request);
+        if (!data || typeof data !== 'object' || Array.isArray(data)) fail(400, '评价格式无效');
+        const stall = existing?.canteen_id ?? Number(data.canteen_id);
+        const ratingScore = score(data.score);
+        const comment = getText(data.comment ?? '', 500, '评论');
+        if (sensitive(comment)) fail(400, '评论包含不当用语');
+        const canteen = await first('SELECT is_active FROM canteens WHERE id=?', stall);
+        if (!canteen || (!id && !canteen.is_active)) fail(404, '档口不存在或已下架');
+
+        const selections = data.dish_scores ?? [];
+        if (!Array.isArray(selections) || selections.length > 20) fail(400, '每条评价最多可选 20 道菜');
+        const menu = await all('SELECT id,name FROM dishes WHERE canteen_id=?', stall);
+        const used = new Set();
+        const dishes = selections.map(item => {
+            if (!item || typeof item !== 'object') fail(400, '菜品格式无效');
+            const dishScore = score(item.score);
+            const name = item.dish_id != null
+                ? menu.find(dish => dish.id === item.dish_id)?.name
+                : getText(item.dish_name, 80, '菜品').replace(/\s+/gu, ' ');
+            if (!name || sensitive(name)) fail(400, '请选择该档口的菜品或输入新菜名');
+            if (used.has(name)) fail(400, '每道菜只能评分一次');
+            used.add(name);
+            return { name, score: dishScore };
+        });
+
+        const writes = dishes.filter(dish => !menu.some(item => item.name === dish.name)).map(dish =>
+            q('INSERT INTO dishes (canteen_id,name) VALUES (?,?) ON CONFLICT(canteen_id,name) DO NOTHING', stall, dish.name));
+        const dishSql = `(SELECT COALESCE(json_group_array(json_object('id',d.id,'name',d.name,'score',json_extract(j.value,'$.score'))),'[]')
+            FROM json_each(?) j JOIN dishes d ON d.canteen_id=? AND d.name=json_extract(j.value,'$.name'))`;
+        if (id) {
+            writes.push(q(`UPDATE ratings SET score=?,comment=?,dish_scores=${dishSql},
+                photo=CASE WHEN ? THEN ? ELSE photo END WHERE id=? AND user_id=? AND is_deleted=0`,
+                ratingScore, comment, JSON.stringify(dishes), stall, Number(Boolean(photo || data.remove_photo === true)), photo ?? null, id, user.id));
+        } else {
+            writes.push(q(`INSERT INTO ratings (user_id,canteen_id,score,comment,is_deleted,created_at,dish_scores,photo)
+                VALUES (?,?,?,?,0,?,${dishSql},?)`, user.id, stall, ratingScore, comment, now(), JSON.stringify(dishes), stall, photo ?? null));
+        }
+        writes.push(history(q, stall));
+        let result;
+        try { result = await batch(writes); } catch (error) {
+            if (String(error).includes('ratings.user_id, ratings.canteen_id')) fail(409, '您已评价过该档口');
+            throw error;
+        }
+        if (!result.at(-2).meta.changes) fail(404, '评价不存在');
+        return json({ msg: id ? '评价已更新' : '评分成功' });
+    }
+
+    if (method === 'POST' && path === '/api/report') {
+        const data = await body(request);
+        const id = Number(data.comment_id);
+        const reason = getText(data.content, 500, '举报原因');
+        if (!reason) fail(400, '请输入举报原因');
+        if (!await first('SELECT id FROM ratings WHERE id=? AND is_deleted=0', id)) fail(404, '评价不存在');
+        await q('INSERT INTO reports (user_id,comment_id,content,created_at) VALUES (?,?,?,?)', viewer?.id ?? null, id, reason, now()).run();
+        return json({ msg: '举报成功' });
+    }
+
+    if (path.startsWith('/api/admin/')) {
+        if (!viewer?.is_admin) fail(403, '无权限访问');
+        return admin({ path, method, request, viewer, q, all, first, batch, json, fail, body, form, photoBytes, now, history, getText });
+    }
+    fail(404, '接口不存在');
+}
+
+export default {
+    async fetch(request, env) {
+        const origin = request.headers.get('Origin');
+        const allowed = origin === env.PAGES_ORIGIN;
+        let result;
+        if (request.method === 'OPTIONS') {
+            result = new Response(null, { status: allowed ? 204 : 403 });
+        } else {
+            try { result = await route(request, env); }
+            catch (error) {
+                if (!error.status) console.error(error);
+                result = json({ msg: error.status ? error.message : '服务暂时不可用' }, error.status || 500);
+            }
+        }
+        result.headers.set('Cache-Control', 'no-store');
+        result.headers.set('Vary', 'Origin');
+        if (allowed) {
+            result.headers.set('Access-Control-Allow-Origin', origin);
+            result.headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+            result.headers.set('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
+        }
+        return result;
+    }
+};
