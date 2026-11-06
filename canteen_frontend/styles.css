@@ -1891,6 +1891,17 @@ textarea {
     color: var(--primary);
     font-size: 13px;
     font-weight: 800;
+    overflow: hidden;
+    padding: 0;
+    border: 0;
+}
+
+button.comment-avatar { cursor: pointer; }
+
+.avatar-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
 .comment-main {

@@ -24,16 +24,18 @@ def main():
         with args.output.open("x", encoding="utf-8", newline="\n") as output:
             for table in TABLES:
                 columns = [row[1] for row in db.execute(f"PRAGMA table_info({table})")]
-                expressions = ", ".join("NULL" if column in {"token", "photo"} else f'quote("{column}")' for column in columns)
+                expressions = ", ".join("NULL" if column in {"token", "photo", "avatar"} else f'quote("{column}")' for column in columns)
                 for row in db.execute(f"SELECT {expressions} FROM {table} ORDER BY id"):
                     values = ", ".join(value if value is not None else "NULL" for value in row)
                     output.write(f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({values});\n")
-                if "photo" in columns:
-                    for item_id, photo in db.execute(f"SELECT id, photo FROM {table} WHERE photo IS NOT NULL"):
+                for column in ("photo", "avatar"):
+                    if column not in columns:
+                        continue
+                    for item_id, photo in db.execute(f"SELECT id, {column} FROM {table} WHERE {column} IS NOT NULL"):
                         for offset in range(0, len(photo), 40_000):
                             chunk = photo[offset:offset + 40_000].hex()
                             output.write(
-                                f"UPDATE {table} SET photo=CAST(COALESCE(photo, X'') || X'{chunk}' AS BLOB) "
+                                f"UPDATE {table} SET {column}=CAST(COALESCE({column}, X'') || X'{chunk}' AS BLOB) "
                                 f"WHERE id={item_id};\n"
                             )
 

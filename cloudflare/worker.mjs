@@ -35,9 +35,9 @@ async function form(request) {
     try { return await request.formData(); } catch { fail(400, '上传格式无效'); }
 }
 
-async function photoBytes(upload) {
+async function photoBytes(upload, maxBytes = 1_500_000) {
     if (!upload || typeof upload === 'string' || !upload.size) return null;
-    if (upload.size > 1_500_000) fail(413, '照片处理后不能超过 1.5 MB');
+    if (upload.size > maxBytes) fail(413, maxBytes === 50_000 ? '头像不能超过 50 KB' : '照片处理后不能超过 1.5 MB');
     const data = await upload.arrayBuffer();
     const bytes = new Uint8Array(data);
     if (bytes[0] !== 255 || bytes[1] !== 216 || bytes.at(-2) !== 255 || bytes.at(-1) !== 217) {
@@ -92,7 +92,7 @@ async function route(request, env) {
         const username = getText(data.username, 50, '账号');
         const password = getText(data.password, 100, '密码');
         if (!username || !password) fail(400, '账号和密码不能为空');
-        let user = await first('SELECT * FROM users WHERE username=?', username);
+        let user = await first('SELECT id,password,token,nickname,is_admin FROM users WHERE username=?', username);
         if (path === '/api/register') {
             if (typeof data.confirm_password !== 'string' || data.confirm_password.trim() !== password) fail(400, '两次输入的密码不一致');
             if (user || username.toLowerCase() === 'admin' || username.toLowerCase().startsWith('__guest_')) fail(409, '该账号不可注册');
@@ -127,20 +127,39 @@ async function route(request, env) {
             await q('UPDATE users SET nickname=?,taste=?,birthplace=? WHERE id=?',
                 user.nickname, user.taste, user.birthplace, user.id).run();
         }
-        return json({ nickname: user.nickname, taste: user.taste, birthplace: user.birthplace });
+        const avatar = await first('SELECT avatar IS NOT NULL has_avatar FROM users WHERE id=?', user.id);
+        return json({ nickname: user.nickname, taste: user.taste, birthplace: user.birthplace,
+            avatar_url: avatar.has_avatar ? `/api/avatars/${user.id}` : null });
+    }
+
+    if (path === '/api/profile/avatar' && ['PUT', 'DELETE'].includes(method)) {
+        const user = auth();
+        if (user.username.startsWith('__guest_')) fail(403, '访客没有公开资料');
+        const avatar = method === 'PUT' ? await photoBytes((await form(request)).get('photo'), 50_000) : null;
+        if (method === 'PUT' && !avatar) fail(400, '请选择头像');
+        await q('UPDATE users SET avatar=? WHERE id=?', avatar, user.id).run();
+        return json({ avatar_url: avatar ? `/api/avatars/${user.id}` : null });
+    }
+
+    const avatarMatch = /^\/api\/avatars\/(\d+)$/.exec(path);
+    if (method === 'GET' && avatarMatch) {
+        const row = await first("SELECT avatar FROM users WHERE id=? AND username NOT GLOB '__guest_*'", Number(avatarMatch[1]));
+        if (!row?.avatar) fail(404, '头像不存在');
+        return new Response(new Uint8Array(row.avatar), { headers: { 'Content-Type': 'image/jpeg', 'X-Content-Type-Options': 'nosniff' } });
     }
 
     const profileMatch = /^\/api\/users\/(\d+)$/.exec(path);
     if (method === 'GET' && profileMatch) {
         const id = Number(profileMatch[1]);
-        const profile = await first(`SELECT nickname,taste,birthplace FROM users
+        const profile = await first(`SELECT nickname,taste,birthplace,avatar IS NOT NULL has_avatar FROM users
             WHERE id=? AND username NOT GLOB '__guest_*'`, id);
         if (!profile) fail(404, '用户不存在');
         const rows = await all(`SELECT r.id,r.canteen_id,c.name canteen_name,r.score,r.comment content,
             r.dish_name,r.dish_scores,substr(r.created_at,1,16) created_at
             FROM ratings r JOIN canteens c ON c.id=r.canteen_id
             WHERE r.user_id=? AND r.is_deleted=0 AND r.is_anonymous=0 ORDER BY r.created_at DESC,r.id DESC`, id);
-        return json({ ...profile, reviews: rows.map(row => ({ ...row, dish_scores: decodeScores(row.dish_scores) })) });
+        return json({ ...profile, avatar_url: profile.has_avatar ? `/api/avatars/${id}` : null,
+            reviews: rows.map(row => ({ ...row, dish_scores: decodeScores(row.dish_scores) })) });
     }
 
     if (method === 'GET' && path === '/api/categories') return json(await all('SELECT * FROM categories ORDER BY id'));
@@ -160,7 +179,7 @@ async function route(request, env) {
                 FROM canteens c LEFT JOIN categories g ON g.id=c.category_id WHERE c.id=?`, id),
             q('SELECT id,name,photo IS NOT NULL has_photo FROM dishes WHERE canteen_id=? ORDER BY name', id),
             q(`SELECT r.id,r.user_id,u.nickname,u.username GLOB '__guest_*' is_guest,
-                r.is_anonymous,r.score,r.comment,r.created_at,r.dish_name,r.dish_scores,
+                u.avatar IS NOT NULL has_avatar,r.is_anonymous,r.score,r.comment,r.created_at,r.dish_name,r.dish_scores,
                 r.photo IS NOT NULL has_photo FROM ratings r JOIN users u ON u.id=r.user_id
                 WHERE r.canteen_id=? AND r.is_deleted=0 ORDER BY r.created_at DESC,r.id DESC`, id),
             q('SELECT created_at,avg_score,rating_count FROM rating_history WHERE canteen_id=? ORDER BY created_at', id)
@@ -178,6 +197,7 @@ async function route(request, env) {
             }
             const anonymous = Boolean(row.is_anonymous || row.is_guest);
             return { id: row.id, user: anonymous ? '匿名同学' : row.nickname || '同学',
+                avatar_url: !anonymous && row.has_avatar ? `/api/avatars/${row.user_id}` : null,
                 author_id: anonymous ? null : row.user_id, is_anonymous: anonymous, is_mine: viewer?.id === row.user_id,
                 content: row.comment, score: row.score, created_at: minute(row.created_at), dish_name: row.dish_name,
                 dish_scores: dishScores, photo_url: photoUrl('ratings', row) };

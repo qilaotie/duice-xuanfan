@@ -97,6 +97,8 @@ class User(db.Model):
     nickname = db.Column(db.String(24))
     taste = db.Column(db.String(80))
     birthplace = db.Column(db.String(40))
+    avatar = deferred(db.Column(db.LargeBinary))
+    has_avatar = column_property(avatar.expression.is_not(None))
     password = db.Column(db.String(200), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)  # 是否管理员
     token = db.Column(db.String(64), unique=True, nullable=True)
@@ -307,7 +309,36 @@ def profile():
         except ValueError as exc:
             return jsonify({"msg": str(exc)}), 400
         db.session.commit()
-    return jsonify({"nickname": user.nickname, "taste": user.taste, "birthplace": user.birthplace})
+    return jsonify({"nickname": user.nickname, "taste": user.taste, "birthplace": user.birthplace,
+                    "avatar_url": url_for("get_avatar", user_id=user.id) if user.has_avatar else None})
+
+
+@app.route("/api/profile/avatar", methods=["PUT", "DELETE"])
+def update_avatar():
+    user = get_current_user()
+    if not user:
+        return jsonify({"msg": "请先登录"}), 401
+    if user.username.startswith("__guest_"):
+        return jsonify({"msg": "访客没有公开资料"}), 403
+    try:
+        avatar = read_photo(request.files.get("photo"), size=256) if request.method == "PUT" else None
+    except ValueError as exc:
+        return jsonify({"msg": str(exc)}), 400
+    if request.method == "PUT" and not avatar:
+        return jsonify({"msg": "请选择头像"}), 400
+    if avatar and len(avatar) > 50_000:
+        return jsonify({"msg": "头像不能超过 50 KB"}), 413
+    user.avatar = avatar
+    db.session.commit()
+    return jsonify({"avatar_url": url_for("get_avatar", user_id=user.id) if avatar else None})
+
+
+@app.route("/api/avatars/<int:user_id>")
+def get_avatar(user_id):
+    user = db.session.get(User, user_id)
+    if not user or not user.has_avatar or user.username.startswith("__guest_"):
+        abort(404)
+    return send_file(BytesIO(user.avatar), mimetype="image/jpeg", max_age=0)
 
 
 @app.route("/api/users/<int:user_id>")
@@ -320,6 +351,7 @@ def public_profile(user_id):
     ).order_by(Rating.created_at.desc(), Rating.id.desc()).all()
     return jsonify({
         "nickname": user.nickname, "taste": user.taste, "birthplace": user.birthplace,
+        "avatar_url": url_for("get_avatar", user_id=user.id) if user.has_avatar else None,
         "reviews": [{
             "id": rating.id, "canteen_id": rating.canteen_id, "canteen_name": name,
             "score": rating.score, "content": rating.comment, "dish_name": rating.dish_name,
@@ -332,7 +364,7 @@ def public_profile(user_id):
 PHOTO_MODELS = {"canteens": Canteen, "dishes": Dish, "ratings": Rating}
 
 
-def read_photo(upload):
+def read_photo(upload, size=1600):
     if not upload or not upload.filename:
         return None
     raw = upload.read(5 * 1024 * 1024 + 1)
@@ -343,7 +375,7 @@ def read_photo(upload):
             if source.width * source.height > 24_000_000:
                 raise ValueError("照片像素过大")
             image = ImageOps.exif_transpose(source)
-            image.thumbnail((1600, 1600))
+            image.thumbnail((size, size))
             output = BytesIO()
             image.convert("RGB").save(output, "JPEG", quality=85)
             return output.getvalue()
@@ -441,6 +473,7 @@ def get_canteen_detail(canteen_id):
             "is_mine": viewer is not None and viewer.id == r.user_id,
             "user": "匿名同学" if anonymous else user.nickname or "同学",
             "author_id": None if anonymous else user.id,
+            "avatar_url": url_for("get_avatar", user_id=user.id) if not anonymous and user.has_avatar else None,
             "is_anonymous": anonymous,
             "content": r.comment,
             "dish_name": r.dish_name,
@@ -1087,6 +1120,8 @@ def ensure_db_schema():
             db.session.execute(text("ALTER TABLE users ADD COLUMN taste VARCHAR(80)"))
         if not any(column[1] == "birthplace" for column in user_columns):
             db.session.execute(text("ALTER TABLE users ADD COLUMN birthplace VARCHAR(40)"))
+        if not any(column[1] == "avatar" for column in user_columns):
+            db.session.execute(text("ALTER TABLE users ADD COLUMN avatar BLOB"))
         for table in ("canteens", "dishes", "ratings"):
             columns = db.session.execute(text(f"PRAGMA table_info({table})")).fetchall()
             if columns and not any(column[1] == "photo" for column in columns):

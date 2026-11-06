@@ -399,10 +399,43 @@
             $('#nickname-input').value = data.nickname || '';
             $('#profile-taste').value = data.taste || '';
             $('#profile-birthplace').value = data.birthplace || '';
+            showProfileAvatar(data.avatar_url);
             clearError($('#nickname-error'));
             openModal($('#nickname-modal'));
         } catch (error) {
             toast(error.message, 'error');
+        }
+    }
+
+    function avatarContent(url, name) {
+        return photoImage(url, '', 'avatar-image') || escapeHtml(initialOf(name));
+    }
+
+    function showProfileAvatar(url) {
+        $('#profile-avatar-preview').innerHTML = avatarContent(url, state.nickname || '同学');
+        $('#profile-avatar-remove').hidden = !url;
+    }
+
+    async function changeProfileAvatar(photo) {
+        const input = $('#profile-avatar-input');
+        const remove = $('#profile-avatar-remove');
+        const errorElement = $('#nickname-error');
+        input.disabled = remove.disabled = true;
+        clearError(errorElement);
+        try {
+            let body;
+            if (photo) {
+                body = new FormData();
+                body.append('photo', await preparePhoto(photo, 256, 50_000));
+            }
+            const data = await api('/api/profile/avatar', { method: photo ? 'PUT' : 'DELETE', body });
+            showProfileAvatar(data.avatar_url);
+            toast(photo ? '头像已更新' : '头像已移除');
+        } catch (error) {
+            showError(errorElement, error.message);
+        } finally {
+            input.value = '';
+            input.disabled = remove.disabled = false;
         }
     }
 
@@ -448,6 +481,7 @@
             if (requestId !== publicProfileRequest) return;
             title.textContent = profile.nickname || '同学';
             content.innerHTML = `
+                <span class="comment-avatar">${avatarContent(profile.avatar_url, profile.nickname || '同学')}</span>
                 <p>口味偏好：${escapeHtml(profile.taste || '未填写')}</p>
                 <p>出生地：${escapeHtml(profile.birthplace || '未填写')}</p>
                 <h3>历史评价</h3>
@@ -1046,7 +1080,9 @@
         const commentsHtml = comments.length
             ? comments.map(comment => `
                 <article class="comment-item">
-                    <div class="comment-avatar">${escapeHtml(initialOf(comment.user))}</div>
+                    ${comment.author_id
+                        ? `<button type="button" class="comment-avatar" data-action="open-public-profile" data-id="${Number(comment.author_id)}" aria-label="查看${escapeHtml(comment.user)}的个人资料">${avatarContent(comment.avatar_url, comment.user)}</button>`
+                        : `<div class="comment-avatar">${avatarContent(null, comment.user)}</div>`}
                     <div class="comment-main">
                         <div class="comment-head">
                             ${comment.author_id
@@ -1126,22 +1162,24 @@
         return url ? `<img class="${className}" src="${escapeHtml((window.CANTEEN_API_ORIGIN || '') + url)}" alt="${escapeHtml(alt)}" loading="lazy">` : '';
     }
 
-    async function preparePhoto(photo) {
-        if (!window.CANTEEN_API_ORIGIN) return photo;
+    async function preparePhoto(photo, maxSide = 1400, maxBytes = 1_500_000) {
         if (photo.size > 5 * 1024 * 1024) throw new Error('照片不能超过 5 MB');
         let image;
         try {
             image = await createImageBitmap(photo);
             const canvas = document.createElement('canvas');
-            const ratio = Math.min(1, 1400 / Math.max(image.width, image.height));
+            const ratio = Math.min(1, maxSide / Math.max(image.width, image.height));
             canvas.width = Math.max(1, Math.round(image.width * ratio));
             canvas.height = Math.max(1, Math.round(image.height * ratio));
             const context = canvas.getContext('2d');
             context.fillStyle = '#fff';
             context.fillRect(0, 0, canvas.width, canvas.height);
             context.drawImage(image, 0, 0, canvas.width, canvas.height);
-            const jpeg = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.82));
-            if (!jpeg || jpeg.size > 1_500_000) throw new Error();
+            let jpeg = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+            if (jpeg && jpeg.size > maxBytes) {
+                jpeg = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.62));
+            }
+            if (!jpeg || jpeg.size > maxBytes) throw new Error();
             return new File([jpeg], 'photo.jpg', { type: 'image/jpeg' });
         } catch {
             throw new Error('无法处理这张照片，请换一张 JPEG、PNG 或 WebP 图片');
@@ -2126,6 +2164,11 @@
         document.addEventListener('click', handleDocumentClick);
         $('#auth-toggle').addEventListener('click', () => setAuthMode($('#auth-confirm').disabled));
         $('#nickname-btn').addEventListener('click', openNickname);
+        $('#profile-avatar-input').addEventListener('change', event => {
+            const photo = event.target.files[0];
+            if (photo) changeProfileAvatar(photo);
+        });
+        $('#profile-avatar-remove').addEventListener('click', () => changeProfileAvatar(null));
         $('#my-reviews-btn').addEventListener('click', openMyReviews);
         $('#nickname-form').addEventListener('submit', saveNickname);
         $('#detail-content').addEventListener('change', event => {

@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=home-stats">
+    <link rel="stylesheet" href="styles.css?v=avatars">
 </head>
 <body>
 <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -403,6 +403,14 @@
         <button type="button" class="icon-btn modal-close" data-close-modal aria-label="关闭">×</button>
         <div class="modal-head"><h2 id="nickname-title">编辑个人资料</h2><p>填写的资料和非匿名评价会公开展示。</p></div>
         <form id="nickname-form" class="stack">
+            <div class="detail-photo-row">
+                <span class="comment-avatar" id="profile-avatar-preview"></span>
+                <label class="field">
+                    <span>上传头像</span>
+                    <input type="file" id="profile-avatar-input" accept="image/jpeg,image/png,image/webp">
+                </label>
+                <button type="button" class="btn btn-soft btn-sm" id="profile-avatar-remove" hidden>移除头像</button>
+            </div>
             <label class="field">
                 <span>昵称（可选）</span>
                 <input type="text" id="nickname-input" maxlength="24" autocomplete="nickname">
@@ -437,6 +445,6 @@
         <div id="public-profile-content" class="stack" aria-live="polite"></div>
     </div>
 </div>
-<script src="app.js?v=public-profiles" defer></script>
+<script src="app.js?v=avatars" defer></script>
 </body>
 </html>
