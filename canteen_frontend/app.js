@@ -636,6 +636,8 @@
         return state.canteens.filter(stall => stall.category_kind !== 'campus');
     }
 
+    let campusLocationFilter = '';
+
     function renderCampusFood() {
         const list = $('#campus-food-list');
         const buildings = getCategories().filter(category => category.kind === 'campus');
@@ -643,17 +645,42 @@
             list.textContent = '正在加载校内楼宇…';
             return;
         }
+        const keyword = $('#campus-food-search').value.trim().toLowerCase();
+        if (!buildings.some(location => String(location.id) === campusLocationFilter)) campusLocationFilter = '';
+        const entriesByLocation = new Map(buildings.map(location => [location.id, []]));
+        for (const stall of state.canteens) entriesByLocation.get(stall.category_id)?.push(stall);
+        const total = Array.from(entriesByLocation.values()).reduce((sum, entries) => sum + entries.length, 0);
+        const directory = [{ id: '', name: '全部地点', count: total }, ...buildings.map(location =>
+            ({ ...location, count: entriesByLocation.get(location.id).length }))];
+        $('#campus-food-directory').innerHTML = directory.map(location => {
+            const selected = String(location.id) === campusLocationFilter;
+            return `<button type="button" class="category-btn${selected ? ' is-active' : ''}"
+                data-campus-location="${escapeHtml(location.id)}" aria-pressed="${selected}">
+                <span class="cat-name">${escapeHtml(location.name)}</span><span class="cat-count">${location.count}</span>
+            </button>`;
+        }).join('');
+
         const grouped = new Map();
         const buildingNames = ['老综合楼', '新综合楼', '丁香综合楼'];
+        let resultCount = 0;
         for (const location of buildings) {
+            if (campusLocationFilter && String(location.id) !== campusLocationFilter) continue;
             const name = buildingNames[Math.floor((location.id - 100001) / 2)] || location.name;
+            const entries = entriesByLocation.get(location.id).filter(stall =>
+                `${stall.name} ${location.name} ${name}`.toLowerCase().includes(keyword));
+            if (keyword && !entries.length) continue;
+            resultCount += entries.length;
             if (!grouped.has(name)) grouped.set(name, []);
-            grouped.get(name).push(location);
+            grouped.get(name).push({ location, entries });
+        }
+        $('#campus-food-count').textContent = `${formatNumber(resultCount)} 家`;
+        if (!grouped.size) {
+            list.innerHTML = emptyState('没有找到相关美食', '试试其他关键词，或切回全部地点。');
+            return;
         }
         list.innerHTML = Array.from(grouped, ([building, locations]) => `<section class="detail-panel stack">
             <div class="panel-head"><h2>${escapeHtml(building)}</h2></div>
-            ${locations.map(location => {
-            const entries = state.canteens.filter(stall => stall.category_id === location.id);
+            ${locations.map(({ location, entries }) => {
             return `<div>
                 <div class="panel-head"><h3>${escapeHtml((location.name.startsWith(building) ? location.name.slice(building.length) : location.name) || '全部美食')}</h3><span class="muted">${entries.length} 家</span></div>
                 ${entries.length ? entries.map(stall => `<div class="admin-row">
@@ -2452,6 +2479,14 @@
     /* ---------------- 事件 ---------------- */
 
     function bindEvents() {
+        $('#campus-food-search').addEventListener('input', renderCampusFood);
+        $('#campus-food-directory').addEventListener('click', event => {
+            const button = event.target.closest('[data-campus-location]');
+            if (!button) return;
+            campusLocationFilter = button.dataset.campusLocation;
+            renderCampusFood();
+            $('#campus-food-directory [aria-pressed="true"]')?.focus({ preventScroll: true });
+        });
         $('#feedback-form').addEventListener('submit', submitFeedback);
         $('#feedback-form').elements.building.addEventListener('change', updateFeedbackLocation);
         $('#feedback-form').elements.photo.addEventListener('change', event => {

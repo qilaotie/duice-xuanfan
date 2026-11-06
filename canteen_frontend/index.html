@@ -137,6 +137,13 @@
             <button type="button" class="btn btn-primary" data-action="feedback-campus">＋ 推荐校内美食</button>
             <button type="button" class="btn btn-soft" data-action="open-rating">写一条评价</button>
         </div>
+        <section class="detail-panel stack" aria-label="校内美食目录">
+            <div class="panel-head"><h2>校内美食目录</h2><span id="campus-food-count" class="muted" role="status"></span></div>
+            <label class="field"><span>搜索校内美食</span>
+                <input type="search" id="campus-food-search" placeholder="输入店名、综合楼或楼层">
+            </label>
+            <div class="category-nav" id="campus-food-directory" aria-label="按楼层筛选"></div>
+        </section>
         <div id="campus-food-list" class="stack" aria-live="polite"></div>
     </section>
 
@@ -508,6 +515,6 @@
         </form>
     </div>
 </div>
-<script src="app.js?v=feedback-location" defer></script>
+<script src="app.js?v=campus-directory" defer></script>
 </body>
 </html>
