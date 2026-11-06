@@ -6,8 +6,10 @@ export async function admin(ctx) {
     const success = () => json({ msg: '操作成功' });
     if (method === 'GET' && path === '/api/admin/feedback') {
         const status = new URL(request.url).searchParams.get('status') === 'processed' ? '!=' : '=';
-        return json(await all(`SELECT id,kind,name,content,status,canteen_id,created_at,photo IS NOT NULL has_photo
-            FROM feedback WHERE status ${status} 'pending' ORDER BY id DESC LIMIT 100`));
+        return json(await all(`SELECT f.id,f.kind,f.name,f.content,f.status,f.canteen_id,f.created_at,
+            f.photo IS NOT NULL has_photo,f.suggested_category_id,g.name suggested_category_name
+            FROM feedback f LEFT JOIN categories g ON g.id=f.suggested_category_id
+            WHERE f.status ${status} 'pending' ORDER BY f.id DESC LIMIT 100`));
     }
     const feedback = /^\/api\/admin\/feedback\/(\d+)(\/photo)?$/.exec(path);
     if (feedback && method === 'GET' && feedback[2]) {
@@ -30,7 +32,8 @@ export async function admin(ctx) {
         const rows = await batch([
             q(`INSERT INTO canteens (name,category_id,is_active,photo)
                 SELECT ?,?,1,photo FROM feedback WHERE id=? AND kind='stall' AND status='pending'
-                AND EXISTS (SELECT 1 FROM categories WHERE id=?)
+                AND EXISTS (SELECT 1 FROM categories WHERE id=? AND kind=COALESCE(
+                    (SELECT kind FROM categories WHERE id=feedback.suggested_category_id), 'canteen'))
                 AND NOT EXISTS (SELECT 1 FROM canteens WHERE category_id=? AND name=?)
                 RETURNING id`, name, category, id, category, category, name),
             q(`UPDATE feedback SET status='approved',canteen_id=last_insert_rowid()
@@ -51,7 +54,7 @@ export async function admin(ctx) {
         return json({ photo_url: photo ? `/api/photos/${kind}/${id}` : null });
     }
 
-    match = /^\/api\/admin\/(canteens|dishes)\/(\d+)(\/dishes)?$/.exec(path);
+    match = /^\/api\/admin\/(categories|canteens|dishes)\/(\d+)(\/dishes)?$/.exec(path);
     if (match && ((method === 'PATCH' && !match[3]) ||
         (method === 'POST' && match[1] === 'canteens' && match[3]))) {
         const [, table, raw, addDish] = match;
@@ -59,6 +62,7 @@ export async function admin(ctx) {
         const dish = addDish || table === 'dishes';
         const name = getText((await body(request)).name, dish ? 80 : 100, '名称').replace(/\s+/gu, ' ');
         if (!name) fail(400, '名称不能为空');
+        const category = table === 'categories';
         if (!await first(`SELECT id FROM ${table} WHERE id=?`, id)) fail(404, '记录不存在');
         if (addDish) {
             const row = await first(`INSERT INTO dishes (canteen_id,name) VALUES (?,?)
@@ -68,7 +72,8 @@ export async function admin(ctx) {
         } else {
             try {
                 await batch([q(`UPDATE ${table} SET name=? WHERE id=?`, name, id),
-                    action(dish ? 'rename_dish' : 'rename_canteen', dish ? 'dish' : 'canteen', id)]);
+                    action(category ? 'rename_category' : dish ? 'rename_dish' : 'rename_canteen',
+                        category ? 'category' : dish ? 'dish' : 'canteen', id)]);
             } catch (error) {
                 if (dish && String(error).includes('dishes.canteen_id, dishes.name')) fail(409, '该档口已有同名菜品');
                 throw error;

@@ -61,7 +61,7 @@ function decodeScores(value) {
     return JSON.parse(value || 'null') || [];
 }
 
-const stallsSql = `SELECT c.id,c.name,c.category_id,g.name category_name,c.is_active,
+const stallsSql = `SELECT c.id,c.name,c.category_id,g.name category_name,COALESCE(g.kind,'canteen') category_kind,c.is_active,
     ROUND(AVG(r.score),2) score, COUNT(r.id) rating_count
     FROM canteens c LEFT JOIN categories g ON g.id=c.category_id
     LEFT JOIN ratings r ON r.canteen_id=c.id AND r.is_deleted=0`;
@@ -167,7 +167,7 @@ async function route(request, env) {
         return json(await all(stallsSql + ' WHERE c.is_active=1 GROUP BY c.id ORDER BY c.category_id,c.name'));
     }
     if (method === 'GET' && path === '/api/stalls/ranking') {
-        const rows = await all(stallsSql + ' WHERE c.is_active=1 GROUP BY c.id HAVING COUNT(r.id)>0 ORDER BY score DESC,c.id');
+        const rows = await all(stallsSql + " WHERE c.is_active=1 AND COALESCE(g.kind,'canteen')='canteen' GROUP BY c.id HAVING COUNT(r.id)>0 ORDER BY score DESC,c.id");
         return json(rows.map(row => ({ ...row, avg_score: row.score })));
     }
 
@@ -359,7 +359,11 @@ async function route(request, env) {
         const content = getText(data.content ?? '', 1000, '反馈内容');
         const photo = kind === 'stall' ? await photoBytes(fields?.get('photo')) : null;
         if (kind === 'issue' ? !content : !name || !photo) fail(400, kind === 'issue' ? '请输入反馈内容' : '请填写档口名称并添加照片');
-        await q('INSERT INTO feedback (kind,name,content,photo,created_at) VALUES (?,?,?,?,?)', kind, name, content, photo, now()).run();
+        const category = data.suggested_category_id ? Number(data.suggested_category_id) : null;
+        if (category !== null && (kind !== 'stall' || !Number.isSafeInteger(category) ||
+            !await first("SELECT id FROM categories WHERE id=?", category))) fail(400, '请选择有效位置');
+        await q('INSERT INTO feedback (kind,name,content,photo,created_at,suggested_category_id) VALUES (?,?,?,?,?,?)',
+            kind, name, content, photo, now(), category).run();
         return json({ msg: '反馈已提交' }, 201);
     }
 

@@ -34,7 +34,8 @@
         </a>
 
         <nav class="main-nav" aria-label="主导航">
-            <button type="button" class="nav-link is-active" data-nav="stalls">档口</button>
+            <button type="button" class="nav-link is-active" data-nav="stalls">食堂</button>
+            <button type="button" class="nav-link" data-nav="campus">校内美食</button>
             <button type="button" class="nav-link" data-nav="ranking">排行榜</button>
             <button type="button" class="nav-link" data-nav="admin" hidden>管理后台</button>
         </nav>
@@ -128,6 +129,17 @@
     </section>
 
     <!-- ======== 排行榜视图 ======== -->
+    <section class="view" id="view-campus">
+        <div class="section-heading">
+            <span class="eyebrow">CAMPUS FOOD</span>
+            <h1>校内美食</h1>
+            <p>找找食堂之外的好吃的，按综合楼和楼层浏览同学们的推荐。</p>
+            <button type="button" class="btn btn-primary" data-action="feedback-campus">＋ 推荐校内美食</button>
+            <button type="button" class="btn btn-soft" data-action="open-rating">写一条评价</button>
+        </div>
+        <div id="campus-food-list" class="stack" aria-live="polite"></div>
+    </section>
+
     <section class="view" id="view-ranking">
         <div class="section-heading">
             <span class="eyebrow">TOP RATED</span>
@@ -327,13 +339,13 @@
         <form id="rating-form" class="stack">
             <div class="field-row">
                 <label class="field">
-                    <span>食堂</span>
+                    <span id="rating-category-label">食堂</span>
                     <select id="rating-category">
                         <option value="">请选择食堂</option>
                     </select>
                 </label>
                 <label class="field">
-                    <span>档口</span>
+                    <span id="rating-canteen-label">档口</span>
                     <select id="rating-canteen">
                         <option value="">请先选择食堂</option>
                     </select>
@@ -481,7 +493,9 @@
         <button type="button" class="icon-btn modal-close" data-close-modal aria-label="关闭">×</button>
         <div class="modal-head"><h2 id="feedback-title">问题反馈</h2></div>
         <form id="feedback-form" class="stack">
-            <label class="field" id="feedback-name-field" hidden><span>档口名称</span><input name="name" maxlength="100"></label>
+            <label class="field" id="feedback-name-field" hidden><span id="feedback-name-label">档口名称</span><input name="name" maxlength="100"></label>
+            <label class="field" id="feedback-building-field" hidden><span id="feedback-location-label">所在位置</span><select name="building"></select></label>
+            <label class="field" id="feedback-custom-location-field" hidden><span>填写所在位置</span><input name="customLocation" maxlength="100" placeholder="例如：某食堂旁、某楼一层"></label>
             <label class="field"><span id="feedback-content-label">请描述遇到的问题</span><textarea name="content" rows="4" maxlength="1000"></textarea></label>
             <label class="avatar-picker-control" id="feedback-photo-field" hidden>
                 <input type="file" name="photo" accept="image/jpeg,image/png,image/webp">
@@ -494,6 +508,6 @@
         </form>
     </div>
 </div>
-<script src="app.js?v=user-feedback" defer></script>
+<script src="app.js?v=feedback-location" defer></script>
 </body>
 </html>

@@ -73,6 +73,7 @@
 
         bindEvents();
         setInitialLoading();
+        if (window.location.hash === '#campus') showView('campus');
         if (await useBackupIfNeeded()) return;
         loadCategories().catch(() => {});
         loadCanteens().catch(() => {});
@@ -219,7 +220,8 @@
             if (!map.has(canteen.category_id)) {
                 map.set(canteen.category_id, {
                     id: canteen.category_id,
-                    name: canteen.category_name || '未分类'
+                    name: canteen.category_name || '未分类',
+                    kind: canteen.category_kind
                 });
             }
         });
@@ -525,8 +527,9 @@
             const data = await api('/api/categories');
             state.categories = Array.isArray(data) ? data : [];
             renderCategoryNav();
+            renderCampusFood();
             if (state.canteensLoaded) renderHeroStats();
-            fillRatingCategories();
+            if (!$('#rating-modal').classList.contains('is-open')) fillRatingCategories();
             fillAdminCategorySelect();
         } catch (error) {
             const nav = $('#category-nav');
@@ -542,9 +545,10 @@
             state.canteensLoaded = true;
             renderCanteenGrid();
             renderCategoryNav();
+            renderCampusFood();
             renderHeroStats();
             if ($('#sidebar-total')) {
-                $('#sidebar-total').textContent = `${formatNumber(state.canteens.length)} 个档口`;
+                $('#sidebar-total').textContent = `${formatNumber(diningStalls().length)} 个档口`;
             }
         } catch (error) {
             const grid = $('#canteen-grid');
@@ -585,8 +589,8 @@
         const ratingRows = state.ranking.filter(row => row.avg_score !== null && row.avg_score !== undefined);
         const totalRatings = ratingRows.reduce((sum, row) => sum + (Number(row.rating_count) || 0), 0);
         container.innerHTML = `
-            <div class="stat-card"><strong>${formatNumber(getCategories().length)}</strong><span>食堂</span></div>
-            <div class="stat-card"><strong>${formatNumber(state.canteens.length)}</strong><span>档口</span></div>
+            <div class="stat-card"><strong>${formatNumber(getCategories().filter(category => category.kind !== 'campus').length)}</strong><span>食堂</span></div>
+            <div class="stat-card"><strong>${formatNumber(diningStalls().length)}</strong><span>档口</span></div>
             <div class="stat-card"><strong>${formatNumber(totalRatings)}</strong><span>条评价</span></div>
         `;
     }
@@ -595,9 +599,10 @@
         const nav = $('#category-nav');
         if (!nav) return;
 
-        const categories = getCategories();
+        const categories = getCategories().filter(category => category.kind !== 'campus');
+        const stalls = diningStalls();
         const counts = new Map();
-        state.canteens.forEach(canteen => {
+        stalls.forEach(canteen => {
             const key = String(canteen.category_id);
             counts.set(key, (counts.get(key) || 0) + 1);
         });
@@ -607,7 +612,7 @@
         }
 
         const items = [
-            { id: 'all', name: '全部档口', count: state.canteens.length }
+            { id: 'all', name: '全部档口', count: stalls.length }
         ].concat(categories.map(category => ({
             id: category.id,
             name: category.name,
@@ -625,6 +630,40 @@
                 <span class="cat-count">${formatNumber(item.count)}</span>
             </button>`;
         }).join('');
+    }
+
+    function diningStalls() {
+        return state.canteens.filter(stall => stall.category_kind !== 'campus');
+    }
+
+    function renderCampusFood() {
+        const list = $('#campus-food-list');
+        const buildings = getCategories().filter(category => category.kind === 'campus');
+        if (!buildings.length) {
+            list.textContent = '正在加载校内楼宇…';
+            return;
+        }
+        const grouped = new Map();
+        const buildingNames = ['老综合楼', '新综合楼', '丁香综合楼'];
+        for (const location of buildings) {
+            const name = buildingNames[Math.floor((location.id - 100001) / 2)] || location.name;
+            if (!grouped.has(name)) grouped.set(name, []);
+            grouped.get(name).push(location);
+        }
+        list.innerHTML = Array.from(grouped, ([building, locations]) => `<section class="detail-panel stack">
+            <div class="panel-head"><h2>${escapeHtml(building)}</h2></div>
+            ${locations.map(location => {
+            const entries = state.canteens.filter(stall => stall.category_id === location.id);
+            return `<div>
+                <div class="panel-head"><h3>${escapeHtml((location.name.startsWith(building) ? location.name.slice(building.length) : location.name) || '全部美食')}</h3><span class="muted">${entries.length} 家</span></div>
+                ${entries.length ? entries.map(stall => `<div class="admin-row">
+                    <div class="admin-row-main"><strong>${escapeHtml(stall.name)}</strong>
+                    <p>${stall.score == null ? '暂无评分' : `${escapeHtml(stall.score)} / 5`}</p></div>
+                    <button type="button" class="btn btn-soft btn-sm" data-action="open-detail" data-id="${Number(stall.id)}">查看详情</button>
+                </div>`).join('') : '<p class="muted">还没有收录美食，欢迎推荐。</p>'}
+            </div>`;
+            }).join('')}
+        </section>`).join('');
     }
 
     function setCategoryFilter(value) {
@@ -648,7 +687,7 @@
 
     function filterCanteens() {
         const keyword = state.search.toLowerCase();
-        return state.canteens.filter(canteen => {
+        return diningStalls().filter(canteen => {
             if (state.categoryFilter !== null && String(canteen.category_id) !== String(state.categoryFilter)) {
                 return false;
             }
@@ -798,7 +837,7 @@
         const grid = $('#canteen-grid');
         if (!grid || !state.canteensLoaded) return;
 
-        if (!state.canteens.length) {
+        if (!diningStalls().length) {
             grid.innerHTML = emptyState('还没有档口', '请管理员先在后台添加食堂和档口。');
             updateListHeading([], [], new Map());
             updateListToolbar(false, false);
@@ -1019,6 +1058,7 @@
         window.scrollTo({ top: 0, behavior: 'smooth' });
 
         if (name === 'ranking') renderRanking();
+        if (name === 'campus') renderCampusFood();
         if (name === 'admin') loadAdminAll();
     }
 
@@ -1199,15 +1239,17 @@
         const detailId = state.detailId;
         const { menuAction, id } = form.dataset;
         const add = menuAction === 'add-dish';
-        const path = menuAction === 'rename-dish' ? `/api/admin/dishes/${id}`
-            : `/api/admin/canteens/${id}${add ? '/dishes' : ''}`;
+        const group = menuAction === 'rename-category' ? 'categories' : menuAction === 'rename-dish' ? 'dishes' : 'canteens';
+        const path = `/api/admin/${group}/${id}${add ? '/dishes' : ''}`;
         const button = form.querySelector('button[type="submit"]');
         setBusy(button, true);
         try {
             await api(path, { method: add ? 'POST' : 'PATCH', body: { name: form.elements.namedItem('name').value.trim() } });
             toast(add ? '菜品已添加' : '名称已保存');
-            if (state.detailId === detailId) await openDetail(detailId);
-            if (menuAction === 'rename-canteen') {
+            if (detailId && state.detailId === detailId) await openDetail(detailId);
+            if (group === 'categories') {
+                await refreshAll();
+            } else if (menuAction === 'rename-canteen') {
                 await Promise.all([loadAdminAll(), loadCanteens(), loadRanking()]);
             }
         } catch (error) {
@@ -1385,6 +1427,14 @@
 
     function openRating(canteenId = null, review = null, reviewDetail = state.detailData) {
         const id = canteenId ? Number(canteenId) : null;
+        const selected = state.canteens.find(stall => stall.id === id);
+        const categoryId = selected?.category_id ?? reviewDetail?.category_id;
+        const campus = id ? (selected?.category_kind === 'campus' ||
+            getCategories().some(category => category.id === categoryId && category.kind === 'campus'))
+            : state.view === 'campus';
+        state.ratingScope = campus ? 'campus' : 'canteen';
+        $('#rating-category-label').textContent = campus ? '楼宇与楼层' : '食堂';
+        $('#rating-canteen-label').textContent = campus ? '美食店铺' : '档口';
 
         const detail = review ? reviewDetail : null;
         if (id && $('#detail-modal').classList.contains('is-open')) {
@@ -1491,8 +1541,9 @@
         const select = $('#rating-category');
         if (!select) return;
 
-        const categories = getCategories();
-        select.innerHTML = '<option value="">请选择食堂</option>' + categories
+        const campus = state.ratingScope === 'campus';
+        const categories = getCategories().filter(category => (category.kind === 'campus') === campus);
+        select.innerHTML = (campus ? '<option value="">请选择校内地点</option>' : '<option value="">请选择食堂</option>') + categories
             .map(category => `<option value="${category.id}">${escapeHtml(category.name)}</option>`)
             .join('');
 
@@ -1512,21 +1563,22 @@
     function fillRatingCanteens(categoryId, selectedCanteenId = null) {
         const select = $('#rating-canteen');
         if (!select) return;
+        const campus = state.ratingScope === 'campus';
 
         if (!categoryId) {
-            select.innerHTML = '<option value="">请先选择食堂</option>';
+            select.innerHTML = campus ? '<option value="">请先选择校内地点</option>' : '<option value="">请先选择食堂</option>';
             loadRatingDishes();
             return;
         }
 
         const list = state.canteens.filter(canteen => String(canteen.category_id) === String(categoryId));
         if (!list.length) {
-            select.innerHTML = '<option value="">该食堂暂无档口</option>';
+            select.innerHTML = campus ? '<option value="">该地点暂无美食</option>' : '<option value="">该食堂暂无档口</option>';
             loadRatingDishes();
             return;
         }
 
-        select.innerHTML = '<option value="">请选择档口</option>' + list
+        select.innerHTML = (campus ? '<option value="">请选择美食店铺</option>' : '<option value="">请选择档口</option>') + list
             .map(canteen => `<option value="${canteen.id}">${escapeHtml(canteen.name)}</option>`)
             .join('');
 
@@ -1868,17 +1920,35 @@
 
     function openFeedback(kind) {
         const form = $('#feedback-form');
-        const stall = kind === 'stall';
+        const campus = kind === 'campus';
+        const stall = kind !== 'issue';
         form.reset();
         form.dataset.kind = kind;
-        $('#feedback-title').textContent = stall ? '推荐档口' : '问题反馈';
+        $('#feedback-title').textContent = campus ? '推荐校内美食' : stall ? '推荐档口' : '问题反馈';
+        $('#feedback-name-label').textContent = campus ? '店名或摊位名称' : '档口名称';
+        $('#feedback-building-field').hidden = !stall;
+        $('#feedback-location-label').textContent = campus ? '所在楼宇与楼层' : '所在位置';
+        form.elements.building.required = stall;
+        form.elements.building.replaceChildren(new Option(campus ? '请选择楼宇和楼层' : '请选择食堂或其他位置', ''), ...getCategories()
+            .filter(category => (category.kind === 'campus') === campus).map(category => new Option(category.name, category.id)));
+        if (kind === 'stall') form.elements.building.add(new Option('其他（手动填写）', 'other'));
+        updateFeedbackLocation();
         $('#feedback-name-field').hidden = $('#feedback-photo-field').hidden = !stall;
         form.elements.namedItem('name').required = form.elements.photo.required = stall;
         form.elements.content.required = !stall;
-        $('#feedback-content-label').textContent = stall ? '补充说明（可选，可写食堂和位置）' : '请描述遇到的问题';
+        $('#feedback-content-label').textContent = campus ? '补充说明（可选，可写楼内位置和推荐菜）'
+            : stall ? '补充说明（可选，可写食堂和位置）' : '请描述遇到的问题';
         $('#feedback-photo-label').textContent = '最多 5 MB';
         clearError($('#feedback-error'));
         openModal($('#feedback-modal'));
+    }
+
+    function updateFeedbackLocation() {
+        const form = $('#feedback-form');
+        const other = form.elements.building.value === 'other';
+        $('#feedback-custom-location-field').hidden = !other;
+        form.elements.customLocation.required = other;
+        form.elements.content.maxLength = other ? 880 : 1000;
     }
 
     async function submitFeedback(event) {
@@ -1890,12 +1960,17 @@
         setBusy(button, true);
         try {
             let body = { kind: form.dataset.kind, content: form.elements.content.value.trim() };
-            if (body.kind === 'stall') {
+            if (body.kind !== 'issue') {
                 body = new FormData();
                 body.append('kind', 'stall');
-                body.append('content', form.elements.content.value.trim());
+                const location = form.elements.building.value;
+                const content = form.elements.content.value.trim();
+                const custom = form.elements.customLocation.value.trim();
+                if (location === 'other' && !custom) throw new Error('请填写所在位置');
+                body.append('content', location === 'other' ? `用户填写的位置：${custom}\n${content}` : content);
                 body.append('name', form.elements.namedItem('name').value.trim());
                 body.append('photo', await preparePhoto(form.elements.photo.files[0]));
+                if (location !== 'other') body.append('suggested_category_id', location);
             }
             await api('/api/feedback', { method: 'POST', body, auth: false });
             closeModal($('#feedback-modal'));
@@ -1914,17 +1989,19 @@
         try {
             const rows = await api(`/api/admin/feedback?status=${status}`);
             if ($('#feedback-status').value !== status) return;
-            const options = state.admin.categories.map(category =>
-                `<option value="${Number(category.id)}">${escapeHtml(category.name)}</option>`).join('');
+            const isCampus = row => state.admin.categories.some(category => category.id === row.suggested_category_id && category.kind === 'campus');
+            const options = row => state.admin.categories
+                .filter(category => (category.kind === 'campus') === isCampus(row))
+                .map(category => `<option value="${Number(category.id)}"${category.id === row.suggested_category_id ? ' selected' : ''}>${escapeHtml(category.name)}</option>`).join('');
             list.innerHTML = rows.length ? rows.map(row => `
                 <article class="detail-panel stack" data-feedback-id="${Number(row.id)}">
-                    <strong>${row.kind === 'stall' ? '档口推荐 · ' + escapeHtml(row.name) : '问题反馈'}</strong>
+                    <strong>${row.kind === 'stall' ? (isCampus(row) ? '校内美食推荐 · ' : '档口推荐 · ') + escapeHtml(row.name) : '问题反馈'}</strong>
                     <p class="muted">${escapeHtml(row.created_at)} · ${{pending:'待处理',approved:'已入库',closed:'已处理'}[row.status]}</p>
                     <p class="comment-text">${escapeHtml(row.content || '（无补充说明）')}</p>
                     ${row.has_photo ? `<div><button type="button" class="btn btn-soft btn-sm" data-action="feedback-photo" data-id="${Number(row.id)}">查看提交照片</button></div>` : ''}
                     ${row.status === 'pending' && row.kind === 'stall' ? `<form class="inline-form" data-feedback-approve>
                         <input name="name" aria-label="正式档口名称" value="${escapeHtml(row.name)}" maxlength="100" required>
-                        <select name="category" aria-label="所属食堂" required><option value="">请选择所属食堂</option>${options}</select>
+                        <select name="category" aria-label="所属食堂或楼宇" required><option value="">请选择所属位置</option>${options(row)}</select>
                         <button type="submit" class="btn btn-primary">审核并入库</button>
                     </form>` : ''}
                     ${row.status === 'pending' ? `<div><button type="button" class="btn btn-ghost btn-sm" data-action="feedback-close" data-id="${Number(row.id)}">${row.kind === 'stall' ? '关闭建议' : '标为已处理'}</button></div>` : ''}
@@ -1980,14 +2057,33 @@
             const count = state.admin.canteens.filter(canteen => canteen.category_id === category.id && canteen.is_active !== false).length;
             return `<div class="admin-row">
                 <div class="admin-row-main">
-                    <strong>${escapeHtml(category.name)}</strong>
+                    <strong data-category-name>${escapeHtml(category.name)}</strong>
+                    <form class="inline-form" data-menu-action="rename-category" data-id="${Number(category.id)}" hidden>
+                        <input name="name" aria-label="${category.kind === 'campus' ? '校内地点名称' : '食堂名称'}" value="${escapeHtml(category.name)}" maxlength="100" required>
+                        <button type="submit" class="btn btn-soft btn-sm">保存</button>
+                        <button type="button" class="btn btn-ghost btn-sm" data-action="cancel-category-edit">取消</button>
+                    </form>
                     <p>ID ${escapeHtml(category.id)} · ${formatNumber(count)} 个在售档口</p>
                 </div>
                 <div class="admin-row-actions">
+                    <button type="button" class="btn btn-soft btn-sm" data-action="edit-category">编辑</button>
                     <button type="button" class="btn btn-danger btn-sm" data-action="admin-delete-category" data-id="${category.id}">删除</button>
                 </div>
             </div>`;
         }).join('');
+    }
+
+    function toggleCategoryEdit(button, editing) {
+        const row = button.closest('.admin-row');
+        const form = row.querySelector('form[data-menu-action="rename-category"]');
+        const name = row.querySelector('[data-category-name]');
+        row.querySelector('[data-action="edit-category"]').hidden = editing;
+        form.hidden = !editing;
+        name.hidden = editing;
+        if (editing) {
+            form.reset();
+            form.elements.namedItem('name').select();
+        }
     }
 
     function renderAdminCanteens() {
@@ -2357,6 +2453,7 @@
 
     function bindEvents() {
         $('#feedback-form').addEventListener('submit', submitFeedback);
+        $('#feedback-form').elements.building.addEventListener('change', updateFeedbackLocation);
         $('#feedback-form').elements.photo.addEventListener('change', event => {
             $('#feedback-photo-label').textContent = event.target.files[0]?.name || '最多 5 MB';
         });
@@ -2461,6 +2558,7 @@
         $('#my-reviews-btn').addEventListener('click', openMyReviews);
         $('#nickname-form').addEventListener('submit', saveNickname);
         $('#detail-content').addEventListener('submit', saveMenuChange);
+        $('#admin-category-list').addEventListener('submit', saveMenuChange);
         $('#detail-content').addEventListener('change', event => {
             const input = event.target;
             if (input.matches('input[data-photo-kind]') && input.files[0]) {
@@ -2526,11 +2624,20 @@
         const id = rawId && /^\d+$/.test(rawId) ? Number(rawId) : null;
 
         switch (action) {
+            case 'edit-category':
+                toggleCategoryEdit(element, true);
+                break;
+            case 'cancel-category-edit':
+                toggleCategoryEdit(element, false);
+                break;
             case 'feedback-issue':
                 openFeedback('issue');
                 break;
             case 'feedback-stall':
                 openFeedback('stall');
+                break;
+            case 'feedback-campus':
+                openFeedback('campus');
                 break;
             case 'feedback-photo':
                 if (id) showFeedbackPhoto(id, element);

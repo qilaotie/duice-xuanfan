@@ -108,6 +108,7 @@ class Category(db.Model):
     __tablename__ = "categories"  # 逻辑上：食堂
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
+    kind = db.Column(db.Text, nullable=False, default="canteen")
 
 
 class Canteen(db.Model):
@@ -165,6 +166,7 @@ class Feedback(db.Model):
     has_photo = column_property(photo.expression.is_not(None))
     status = db.Column(db.Text, nullable=False, default="pending")
     canteen_id = db.Column(db.Integer, db.ForeignKey("canteens.id", ondelete="SET NULL"))
+    suggested_category_id = db.Column(db.Integer, db.ForeignKey("categories.id", ondelete="SET NULL"))
     created_at = db.Column(db.Text, nullable=False, default=lambda: datetime.utcnow().isoformat(sep=" ", timespec="milliseconds"))
 
 
@@ -449,7 +451,7 @@ def set_photo(kind, item_id):
 @app.route("/api/categories", methods=["GET"])
 def get_categories():
     categories = Category.query.order_by(Category.id.asc()).all()
-    result = [{"id": c.id, "name": c.name} for c in categories]
+    result = [{"id": c.id, "name": c.name, "kind": c.kind} for c in categories]
     return jsonify(result)
 
 
@@ -473,6 +475,7 @@ def get_canteens():
             "name": c.name,
             "category_id": c.category_id,
             "category_name": cat.name if cat else None,
+            "category_kind": cat.kind if cat else "canteen",
             "score": round(avg, 2) if avg is not None else None  # ✅ 前端就用 score
         })
     return jsonify(result)
@@ -649,7 +652,15 @@ def submit_feedback():
         return jsonify({"msg": str(exc)}), 400
     if kind == "stall" and (not name or not photo):
         return jsonify({"msg": "请填写档口名称并添加照片"}), 400
-    db.session.add(Feedback(kind=kind, name=name or None, content=content, photo=photo))
+    suggested = data.get("suggested_category_id")
+    if suggested:
+        try:
+            suggested = int(suggested)
+        except (TypeError, ValueError):
+            return jsonify({"msg": "请选择校内楼宇"}), 400
+        if kind != "stall" or not db.session.get(Category, suggested):
+            return jsonify({"msg": "请选择有效位置"}), 400
+    db.session.add(Feedback(kind=kind, name=name or None, content=content, photo=photo, suggested_category_id=suggested or None))
     db.session.commit()
     return jsonify({"msg": "反馈已提交"}), 201
 
@@ -663,7 +674,7 @@ def list_feedback():
     condition = Feedback.status == "pending" if pending else Feedback.status != "pending"
     rows = Feedback.query.filter(condition).order_by(Feedback.id.desc()).limit(100)
     return jsonify([{key: getattr(row, key) for key in (
-        "id", "kind", "name", "content", "status", "canteen_id", "created_at", "has_photo"
+        "id", "kind", "name", "content", "status", "canteen_id", "created_at", "has_photo", "suggested_category_id"
     )} for row in rows])
 
 
@@ -698,13 +709,15 @@ def process_feedback(item_id):
     value = data.get("name")
     name = " ".join(value.split()) if isinstance(value, str) else ""
     category = data.get("category_id")
-    if not name or len(name) > 100 or type(category) is not int or not db.session.get(Category, category):
+    row = db.session.get(Feedback, item_id)
+    suggested = db.session.get(Category, row.suggested_category_id) if row.suggested_category_id else None
+    category_kind = suggested.kind if suggested else "canteen"
+    if not name or len(name) > 100 or type(category) is not int or not Category.query.filter_by(id=category, kind=category_kind).first():
         db.session.rollback()
         return jsonify({"msg": "请填写正式名称并选择食堂"}), 400
     if Canteen.query.filter_by(name=name, category_id=category).first():
         db.session.rollback()
         return jsonify({"msg": "该食堂已有同名档口"}), 409
-    row = db.session.get(Feedback, item_id)
     stall = Canteen(name=name, category_id=category, is_active=True, photo=row.photo)
     db.session.add(stall)
     db.session.flush()
@@ -881,6 +894,7 @@ def get_stall_ranking():
         )
         .join(Rating, (Rating.canteen_id == Canteen.id) & (Rating.is_deleted == False))
         .outerjoin(Category, Canteen.category_id == Category.id)
+        .filter(func.coalesce(Category.kind, "canteen") == "canteen")
         .filter(Canteen.is_active == True)
         .group_by(Canteen.id)
         .order_by(func.avg(Rating.score).desc())
@@ -1078,7 +1092,7 @@ def admin_get_categories():
         return resp, code
 
     categories = Category.query.order_by(Category.id.asc()).all()
-    result = [{"id": c.id, "name": c.name} for c in categories]
+    result = [{"id": c.id, "name": c.name, "kind": c.kind} for c in categories]
     return jsonify(result)
 
 
@@ -1180,6 +1194,7 @@ def admin_add_canteen():
 
 
 @app.route("/api/admin/canteens/<int:item_id>", methods=["PATCH"])
+@app.route("/api/admin/categories/<int:item_id>", methods=["PATCH"])
 @app.route("/api/admin/canteens/<int:item_id>/dishes", methods=["POST"])
 @app.route("/api/admin/dishes/<int:item_id>", methods=["PATCH"])
 def admin_update_menu(item_id):
@@ -1188,7 +1203,8 @@ def admin_update_menu(item_id):
         return response, code
     add_dish = request.method == "POST"
     edit_dish = request.path.startswith("/api/admin/dishes/")
-    model = Dish if edit_dish else Canteen
+    edit_category = request.path.startswith("/api/admin/categories/")
+    model = Category if edit_category else Dish if edit_dish else Canteen
     item = model.query.get_or_404(item_id)
     value = (request.get_json() or {}).get("name")
     name = " ".join(value.split()) if isinstance(value, str) else ""
@@ -1201,8 +1217,8 @@ def admin_update_menu(item_id):
         item.name = name
     try:
         db.session.flush()
-        action = "add_dish" if add_dish else "rename_dish" if edit_dish else "rename_canteen"
-        log_admin_action(user, action, "dish" if add_dish or edit_dish else "canteen", item.id)
+        target = "category" if edit_category else "dish" if add_dish or edit_dish else "canteen"
+        log_admin_action(user, "add_dish" if add_dish else f"rename_{target}", target, item.id)
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
@@ -1307,6 +1323,12 @@ def ensure_db_schema():
     """对旧版 SQLite 数据库做小迁移（无需 Alembic）。"""
     try:
         # 使用 session.execute 兼容 SQLAlchemy 1.4+ 的执行方式
+        category_columns = db.session.execute(text("PRAGMA table_info(categories)")).fetchall()
+        if not any(column[1] == "kind" for column in category_columns):
+            db.session.execute(text("ALTER TABLE categories ADD COLUMN kind TEXT NOT NULL DEFAULT 'canteen'"))
+        feedback_columns = db.session.execute(text("PRAGMA table_info(feedback)")).fetchall()
+        if not any(column[1] == "suggested_category_id" for column in feedback_columns):
+            db.session.execute(text("ALTER TABLE feedback ADD COLUMN suggested_category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL"))
         user_columns = db.session.execute(text("PRAGMA table_info(users)")).fetchall()
         if not any(column[1] == "nickname" for column in user_columns):
             db.session.execute(text("ALTER TABLE users ADD COLUMN nickname VARCHAR(24)"))
@@ -1416,6 +1438,12 @@ def init_database():
     with app.app_context():
         db.create_all()
         ensure_db_schema()
+        campus_locations = [building + floor for building in ("老综合楼", "新综合楼", "丁香综合楼") for floor in ("一楼", "二楼")]
+        campus_locations.append("家属区（综合楼）")
+        for category_id, name in enumerate(campus_locations, 100001):
+            if not db.session.get(Category, category_id):
+                db.session.add(Category(id=category_id, name=name, kind="campus"))
+        db.session.commit()
 
         # 仅在显式提供初始密码时创建管理员。
         admin = User.query.filter_by(username="admin").first()

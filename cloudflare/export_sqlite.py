@@ -33,7 +33,8 @@ def main():
                 )
                 for row in db.execute(f"SELECT {expressions} FROM {table} ORDER BY id"):
                     values = ", ".join(value if value is not None else "NULL" for value in row)
-                    output.write(f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({values});\n")
+                    suffix = " ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind" if table == "categories" and "kind" in columns else ""
+                    output.write(f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({values}){suffix};\n")
                 for column in ("photo", "avatar"):
                     if column not in columns:
                         continue
