@@ -383,6 +383,7 @@ a {
     border-radius: 50%;
     background: radial-gradient(circle, rgba(255, 255, 255, .22), transparent 68%);
     content: "";
+    pointer-events: none;
 }
 
 .hero-copy .eyebrow {
@@ -408,6 +409,22 @@ a {
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
+}
+
+.section-hero {
+    margin-bottom: clamp(18px, 3vw, 28px);
+}
+
+.section-hero h1 {
+    font-size: clamp(30px, 4vw, 42px);
+}
+
+.section-hero p:last-child {
+    margin-bottom: 0;
+}
+
+#forum-more {
+    margin-top: 14px;
 }
 
 .hero-stats {

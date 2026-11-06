@@ -265,7 +265,8 @@ def sync_database(areas, dry_run=False):
         db.create_all()
         ensure_db_schema()
 
-        categories = {category.name: category for category in Category.query.all()}
+        categories = {category.name: category for category in Category.query.filter_by(kind="canteen")}
+        campus_ids = {category.id for category in Category.query.filter_by(kind="campus")}
         used_category_ids = set()
         matched_ids = set()
         created_categories = []
@@ -328,7 +329,7 @@ def sync_database(areas, dry_run=False):
 
         # 未匹配到的旧档口：有评价/历史的归档隐藏，没有的删除
         for canteen in Canteen.query.all():
-            if canteen.id in matched_ids:
+            if canteen.id in matched_ids or canteen.category_id in campus_ids:
                 continue
 
             rating_count = Rating.query.filter_by(canteen_id=canteen.id).count()
@@ -342,7 +343,7 @@ def sync_database(areas, dry_run=False):
                 db.session.delete(canteen)
 
         # 新菜单里已经不存在的空食堂（且没有残留档口）直接删除
-        for category in Category.query.all():
+        for category in Category.query.filter_by(kind="canteen"):
             if category.id in used_category_ids:
                 continue
             if Canteen.query.filter_by(category_id=category.id).count() == 0:

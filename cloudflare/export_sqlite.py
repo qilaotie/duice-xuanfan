@@ -2,6 +2,7 @@
 
 import argparse
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 TABLES = ("categories", "canteens", "dishes", "users", "ratings", "review_photos", "reports", "admin_actions", "rating_history", "feedback", "forum_posts", "forum_replies")
@@ -14,7 +15,7 @@ def main():
     args = parser.parse_args()
     if args.output.suffix != ".sql":
         parser.error("output must have a .sql extension")
-    with sqlite3.connect(args.database.resolve().as_uri() + "?mode=ro", uri=True) as db:
+    with closing(sqlite3.connect(args.database.resolve().as_uri() + "?mode=ro", uri=True)) as db:
         db.execute("BEGIN")
         if db.execute("PRAGMA foreign_key_check").fetchone():
             raise SystemExit("Source database contains broken foreign keys")

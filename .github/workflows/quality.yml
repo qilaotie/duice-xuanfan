@@ -1,0 +1,61 @@
+name: Test and branch coverage
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm run test:worker | tee worker-coverage.txt
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: worker-test-results
+          path: worker-coverage.txt
+  flask:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -r tests/requirements.txt
+      - run: python -m coverage run --branch --source=canteen_backend,cloudflare -m unittest discover -s tests -p 'test_*.py'
+      - run: python -m coverage json -o coverage-flask.json
+        if: always()
+      - run: python tests/check_flask_coverage.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flask-test-results
+          path: coverage-flask.json
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -r canteen_backend/requirements.txt
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:frontend
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-test-results
+          path: test-results/frontend-coverage.json

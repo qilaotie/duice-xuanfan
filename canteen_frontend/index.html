@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=campus-layout">
+    <link rel="stylesheet" href="styles.css?v=unified-views">
 </head>
 <body>
 <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -131,12 +131,14 @@
 
     <!-- ======== 排行榜视图 ======== -->
     <section class="view" id="view-campus">
-        <div class="section-heading">
+        <div class="hero-copy section-hero">
             <span class="eyebrow">CAMPUS FOOD</span>
             <h1>校内美食</h1>
             <p>找找食堂之外的好吃的，按综合楼和楼层浏览同学们的推荐。</p>
-            <button type="button" class="btn btn-primary" data-action="feedback-campus">＋ 推荐校内美食</button>
-            <button type="button" class="btn btn-soft" data-action="open-rating">写一条评价</button>
+            <div class="hero-actions">
+                <button type="button" class="btn btn-light" data-action="feedback-campus">＋ 推荐校内美食</button>
+                <button type="button" class="btn btn-ghost-light" data-action="open-rating">写一条评价</button>
+            </div>
         </div>
         <div class="layout campus-layout">
             <div class="content-head campus-content-head">
@@ -157,11 +159,11 @@
     </section>
 
     <section class="view" id="view-forum">
-        <div class="section-heading">
+        <div class="hero-copy section-hero">
             <span class="eyebrow">OFF-CAMPUS FOOD</span>
             <h1>校外美食论坛</h1>
             <p>分享喜欢的店，也给同学们提个醒。欢迎在帖子底下盖楼。</p>
-            <button type="button" class="btn btn-primary" data-action="forum-compose">＋ 发帖子</button>
+            <div class="hero-actions"><button type="button" class="btn btn-light" data-action="forum-compose">＋ 发帖子</button></div>
         </div>
         <div class="content-head">
             <h2>最新帖子</h2>
@@ -174,7 +176,7 @@
     </section>
 
     <section class="view" id="view-ranking">
-        <div class="section-heading">
+        <div class="hero-copy section-hero">
             <span class="eyebrow">TOP RATED</span>
             <h1>口碑排行榜</h1>
             <p>按平均分排序，只统计有效评价。</p>
@@ -206,7 +208,7 @@
 
     <!-- ======== 管理后台视图 ======== -->
     <section class="view" id="view-admin">
-        <div class="section-heading">
+        <div class="hero-copy section-hero">
             <span class="eyebrow">ADMIN CONSOLE</span>
             <h1>管理后台</h1>
             <p>维护食堂与档口，处理评价和举报，查看操作日志。</p>

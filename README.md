@@ -26,3 +26,7 @@ Cloudflare Pages 发布前端，通过服务绑定访问 Cloudflare Worker API�
 5. GitHub Pages 选择 GitHub Actions，运行 `Deploy GitHub Pages` 即可发布跳转入口。跳转目标写在 `.github/workflows/pages.yml` 中。
 
 本地 SQLite、管理员密码文件和本机截图均排除在 Git 提交之外。
+
+## 测试
+
+[测试计划与执行说明](tests/TESTING.md)列出了三层分支覆盖率门槛、复现命令和用例追溯。
