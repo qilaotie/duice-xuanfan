@@ -155,6 +155,29 @@ class ReviewPhoto(db.Model):
     photo = deferred(db.Column(db.LargeBinary, nullable=False))
 
 
+class ForumPost(db.Model):
+    __tablename__ = "forum_posts"
+    __table_args__ = {"sqlite_autoincrement": True}
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    kind = db.Column(db.Text, nullable=False)
+    name = db.Column(db.Text, nullable=False)
+    address = db.Column(db.Text, nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.Text, nullable=False)
+
+
+class ForumReply(db.Model):
+    __tablename__ = "forum_replies"
+    __table_args__ = (db.UniqueConstraint("post_id", "floor"), {"sqlite_autoincrement": True})
+    id = db.Column(db.Integer, primary_key=True)
+    post_id = db.Column(db.Integer, db.ForeignKey("forum_posts.id", ondelete="CASCADE"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    floor = db.Column(db.Integer, nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.Text, nullable=False)
+
+
 class Feedback(db.Model):
     __tablename__ = "feedback"
     __table_args__ = {"sqlite_autoincrement": True}
@@ -631,6 +654,79 @@ def delete_review_photo(rating_id, photo_id):
         abort(404)
     db.session.commit()
     return jsonify({"msg": "照片已删除"})
+
+
+@app.route("/api/forum/posts", methods=["GET", "POST"])
+@app.route("/api/forum/posts/<int:post_id>", methods=["GET", "DELETE"])
+@app.route("/api/forum/posts/<int:post_id>/replies", methods=["POST"])
+def forum_posts(post_id=None):
+    user = get_current_user()
+    def execute(sql, **params):
+        return db.session.execute(text(sql), params)
+
+    author = "CASE WHEN u.username GLOB '__guest_*' THEN '匿名同学' ELSE COALESCE(u.nickname,'同学') END author"
+    if request.method == "GET":
+        cursor = request.args.get("cursor", default=0, type=int)
+        if cursor < 0 or cursor > 2**53 - 1:
+            return jsonify({"msg": "分页参数无效"}), 400
+        if post_id is None:
+            kind = request.args.get("kind", "")
+            if kind not in ("", "recommend", "avoid"):
+                return jsonify({"msg": "帖子类型无效"}), 400
+            rows = execute(f"""SELECT p.id,p.kind,p.name,p.address,substr(p.content,1,160) content,p.created_at,
+                {author},(SELECT COUNT(*) FROM forum_replies WHERE post_id=p.id) reply_count
+                FROM forum_posts p JOIN users u ON u.id=p.user_id
+                WHERE (:cursor=0 OR p.id<:cursor) AND (:kind='' OR p.kind=:kind) ORDER BY p.id DESC LIMIT 31""",
+                cursor=cursor, kind=kind).mappings().all()
+            return jsonify({"rows": [dict(row) for row in rows[:30]], "more": len(rows) > 30})
+        post = execute(f"""SELECT p.id,p.kind,p.name,p.address,p.content,p.created_at,{author},
+            (p.user_id=:viewer OR :admin=1) can_delete FROM forum_posts p JOIN users u ON u.id=p.user_id WHERE p.id=:id""",
+            viewer=user.id if user else 0, admin=int(bool(user and user.is_admin)), id=post_id).mappings().first()
+        if not post:
+            abort(404)
+        rows = execute(f"""SELECT r.floor,r.content,r.created_at,{author} FROM forum_replies r
+            JOIN users u ON u.id=r.user_id WHERE r.post_id=:id AND r.floor>:cursor ORDER BY r.floor LIMIT 51""",
+            id=post_id, cursor=cursor).mappings().all()
+        return jsonify({"post": dict(post), "rows": [dict(row) for row in rows[:50]], "more": len(rows) > 50})
+
+    if not user:
+        return jsonify({"msg": "请先登录"}), 401
+    if request.method == "DELETE":
+        post = ForumPost.query.get_or_404(post_id)
+        if post.user_id != user.id and not user.is_admin:
+            abort(404)
+        ForumReply.query.filter_by(post_id=post.id).delete()
+        db.session.delete(post)
+        db.session.commit()
+        return jsonify({"msg": "帖子已删除"})
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"msg": "请求格式无效"}), 400
+    fields = {"content": 1000} if post_id is not None else {"name": 100, "address": 200, "content": 2000}
+    values = {}
+    for key, max_length in fields.items():
+        value = data.get(key)
+        if not isinstance(value, str) or not 1 <= len(value.strip()) <= max_length:
+            return jsonify({"msg": "请填写完整内容，且不要超过字数限制"}), 400
+        values[key] = value.strip()
+    timestamp = datetime.utcnow().isoformat(sep=" ", timespec="milliseconds")
+    if post_id is None:
+        if data.get("kind") not in ("recommend", "avoid"):
+            return jsonify({"msg": "请选择推荐或避雷"}), 400
+        post = ForumPost(user_id=user.id, kind=data["kind"], created_at=timestamp, **values)
+        db.session.add(post)
+        db.session.flush()
+        result = {"id": post.id}
+    else:
+        floor = execute("""INSERT INTO forum_replies (post_id,user_id,floor,content,created_at)
+            SELECT p.id,:user,COALESCE((SELECT MAX(floor) FROM forum_replies WHERE post_id=p.id),1)+1,:content,:timestamp
+            FROM forum_posts p WHERE p.id=:id RETURNING floor""", user=user.id, timestamp=timestamp, id=post_id, **values).scalar()
+        if floor is None:
+            abort(404)
+        result = {"floor": floor}
+    db.session.commit()
+    return jsonify(result), 201
 
 
 @app.route("/api/feedback", methods=["POST"])

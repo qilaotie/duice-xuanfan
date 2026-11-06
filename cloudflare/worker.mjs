@@ -1,6 +1,7 @@
 import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { admin } from './admin.mjs';
+import { forum } from './forum.mjs';
 
 const derive = promisify(scrypt);
 const sensitive = value => /脏话|恶意|攻击/.test(value);
@@ -348,6 +349,10 @@ async function route(request, env) {
         if (!await first('SELECT id FROM ratings WHERE id=? AND is_deleted=0', id)) fail(404, '评价不存在');
         await q('INSERT INTO reports (user_id,comment_id,content,created_at) VALUES (?,?,?,?)', viewer?.id ?? null, id, reason, now()).run();
         return json({ msg: '举报成功' });
+    }
+
+    if (path.startsWith('/api/forum/')) {
+        return forum({ path, method, request, viewer, auth, q, all, first, json, fail, body, now, getText });
     }
 
     if (method === 'POST' && path === '/api/feedback') {

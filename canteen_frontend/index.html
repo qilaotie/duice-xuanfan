@@ -36,6 +36,7 @@
         <nav class="main-nav" aria-label="主导航">
             <button type="button" class="nav-link is-active" data-nav="stalls">食堂</button>
             <button type="button" class="nav-link" data-nav="campus">校内美食</button>
+            <button type="button" class="nav-link" data-nav="forum">校外论坛</button>
             <button type="button" class="nav-link" data-nav="ranking">排行榜</button>
             <button type="button" class="nav-link" data-nav="admin" hidden>管理后台</button>
         </nav>
@@ -153,6 +154,23 @@
             </aside>
             <div id="campus-food-list" class="stack campus-results" aria-live="polite"></div>
         </div>
+    </section>
+
+    <section class="view" id="view-forum">
+        <div class="section-heading">
+            <span class="eyebrow">OFF-CAMPUS FOOD</span>
+            <h1>校外美食论坛</h1>
+            <p>分享喜欢的店，也给同学们提个醒。欢迎在帖子底下盖楼。</p>
+            <button type="button" class="btn btn-primary" data-action="forum-compose">＋ 发帖子</button>
+        </div>
+        <div class="content-head">
+            <h2>最新帖子</h2>
+            <label class="field"><span>帖子类型</span>
+                <select id="forum-kind-filter"><option value="">全部</option><option value="recommend">推荐</option><option value="avoid">避雷</option></select>
+            </label>
+        </div>
+        <div id="forum-post-list" class="stack" aria-live="polite"></div>
+        <button type="button" class="btn btn-soft" id="forum-more" hidden>查看更多帖子</button>
     </section>
 
     <section class="view" id="view-ranking">
@@ -523,6 +541,36 @@
         </form>
     </div>
 </div>
-<script src="app.js?v=campus-layout" defer></script>
+<div class="modal" id="forum-compose-modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="forum-compose-title">
+        <button type="button" class="icon-btn modal-close" data-close-modal aria-label="关闭">×</button>
+        <div class="modal-head"><h2 id="forum-compose-title">分享校外美食</h2></div>
+        <form id="forum-compose-form" class="stack">
+            <label class="field"><span>类型</span><select name="kind" required><option value="recommend">推荐</option><option value="avoid">避雷</option></select></label>
+            <label class="field"><span>店名</span><input name="name" maxlength="100" required></label>
+            <label class="field"><span>地址</span><input name="address" maxlength="200" placeholder="例如：某条路、某地铁站附近" required></label>
+            <label class="field"><span>菜品或理由</span><textarea name="content" rows="5" maxlength="2000" placeholder="说说推荐或不推荐哪道菜，以及你的理由" required></textarea></label>
+            <p class="form-error" id="forum-compose-error" hidden></p>
+            <button type="submit" class="btn btn-primary">发布帖子</button>
+        </form>
+    </div>
+</div>
+<div class="modal" id="forum-thread-modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="forum-thread-title">
+        <button type="button" class="icon-btn modal-close" data-close-modal aria-label="关闭">×</button>
+        <div class="modal-head"><h2 id="forum-thread-title">帖子详情</h2></div>
+        <div id="forum-thread-content" class="stack"></div>
+        <div id="forum-replies" class="stack" aria-live="polite"></div>
+        <button type="button" class="btn btn-soft btn-sm" id="forum-more-replies" hidden>加载更多回复</button>
+        <form id="forum-reply-form" class="stack" hidden>
+            <label class="field"><span>盖一楼</span><textarea name="content" rows="3" maxlength="1000" required></textarea></label>
+            <p class="form-error" id="forum-reply-error" hidden></p>
+            <button type="submit" class="btn btn-primary">发布回复</button>
+        </form>
+    </div>
+</div>
+<script src="app.js?v=food-forum" defer></script>
 </body>
 </html>

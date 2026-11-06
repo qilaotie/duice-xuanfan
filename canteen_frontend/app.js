@@ -74,6 +74,7 @@
         bindEvents();
         setInitialLoading();
         if (window.location.hash === '#campus') showView('campus');
+        if (window.location.hash === '#forum') showView('forum');
         if (await useBackupIfNeeded()) return;
         loadCategories().catch(() => {});
         loadCanteens().catch(() => {});
@@ -1087,7 +1088,153 @@
 
         if (name === 'ranking') renderRanking();
         if (name === 'campus') renderCampusFood();
+        if (name === 'forum') loadForum();
         if (name === 'admin') loadAdminAll();
+    }
+
+    async function ensurePostingIdentity() {
+        if (state.token || localStorage.getItem('guestToken')) return;
+        const guest = await api('/api/guest', { method: 'POST', auth: false });
+        localStorage.setItem('guestToken', 'Bearer ' + guest.token);
+        updateAuthUI();
+    }
+
+    let forumCursor = 0;
+    let forumListRequest = 0;
+    let threadId = null;
+    let replyCursor = 0;
+    let forumThreadRequest = 0;
+
+    function forumBadge(kind) {
+        return kind === 'avoid' ? '<span class="badge badge-red">避雷</span>' : '<span class="badge badge-amber">推荐</span>';
+    }
+
+    async function loadForum(append = false) {
+        const request = ++forumListRequest;
+        const list = $('#forum-post-list');
+        const more = $('#forum-more');
+        more.disabled = true;
+        if (!append) {
+            forumCursor = 0;
+            more.hidden = true;
+            list.textContent = '正在加载帖子…';
+        }
+        try {
+            const kind = $('#forum-kind-filter').value;
+            const data = await api(`/api/forum/posts?kind=${encodeURIComponent(kind)}&cursor=${forumCursor}`);
+            if (request !== forumListRequest) return;
+            const html = data.rows.map(post => `<article class="detail-panel stack">
+                <div class="panel-head"><h3>${forumBadge(post.kind)} ${escapeHtml(post.name)}</h3></div>
+                <p class="muted">${escapeHtml(post.address)}</p>
+                <p class="comment-text">${escapeHtml(post.content)}</p>
+                <div class="panel-head">
+                    <span class="muted">${escapeHtml(post.author)} · ${escapeHtml(post.created_at.slice(0, 16))}</span>
+                    <button type="button" class="btn btn-soft btn-sm" data-action="forum-open" data-id="${Number(post.id)}">查看帖子 · ${formatNumber(post.reply_count)} 条回复</button>
+                </div>
+            </article>`).join('');
+            if (append) list.insertAdjacentHTML('beforeend', html);
+            else list.innerHTML = html || emptyState('这里还没有帖子', '欢迎分享你的校外美食推荐或避雷经历。');
+            forumCursor = data.rows.at(-1)?.id ?? forumCursor;
+            more.hidden = !data.more;
+        } catch (error) {
+            if (request !== forumListRequest) return;
+            if (append) toast(error.message, 'error');
+            else list.textContent = error.message;
+        } finally {
+            if (request === forumListRequest) more.disabled = false;
+        }
+    }
+
+    async function openForumThread(id, append = false) {
+        const request = ++forumThreadRequest;
+        const modal = $('#forum-thread-modal');
+        const content = $('#forum-thread-content');
+        const replies = $('#forum-replies');
+        const more = $('#forum-more-replies');
+        const form = $('#forum-reply-form');
+        more.disabled = true;
+        if (!append) {
+            threadId = id;
+            replyCursor = 0;
+            form.reset();
+            clearError($('#forum-reply-error'));
+            form.hidden = more.hidden = true;
+            replies.replaceChildren();
+            content.textContent = '正在加载帖子…';
+            openModal(modal);
+        }
+        try {
+            const { post, rows, more: hasMore } = await api(`/api/forum/posts/${id}?cursor=${replyCursor}`);
+            if (request !== forumThreadRequest) return;
+            content.innerHTML = `<article class="detail-panel stack">
+                <h3>${forumBadge(post.kind)} ${escapeHtml(post.name)}</h3>
+                <p>地址：${escapeHtml(post.address)}</p>
+                <p class="comment-text">${escapeHtml(post.content)}</p>
+                <p class="muted">1 楼 · ${escapeHtml(post.author)} · ${escapeHtml(post.created_at.slice(0, 16))}</p>
+                ${post.can_delete ? `<div><button type="button" class="link-btn" data-action="forum-delete" data-id="${Number(post.id)}">删除帖子</button></div>` : ''}
+            </article>`;
+            const html = rows.map(reply => `<article class="detail-panel">
+                <p class="muted">${formatNumber(reply.floor)} 楼 · ${escapeHtml(reply.author)} · ${escapeHtml(reply.created_at.slice(0, 16))}</p>
+                <p class="comment-text">${escapeHtml(reply.content)}</p>
+            </article>`).join('');
+            if (append && replyCursor) replies.insertAdjacentHTML('beforeend', html);
+            else replies.innerHTML = html || '<p class="muted">还没有回复，来盖第一楼吧。</p>';
+            replyCursor = rows.at(-1)?.floor ?? replyCursor;
+            more.hidden = !hasMore;
+            form.hidden = false;
+        } catch (error) {
+            if (request !== forumThreadRequest) return;
+            if (append) toast(error.message, 'error');
+            else content.textContent = error.message;
+        } finally {
+            if (request === forumThreadRequest) more.disabled = false;
+        }
+    }
+
+    async function submitForumPost(event) {
+        event.preventDefault();
+        const form = event.target;
+        const button = event.submitter;
+        const error = $('#forum-compose-error');
+        clearError(error);
+        setBusy(button, true);
+        try {
+            const body = Object.fromEntries(new FormData(form));
+            await ensurePostingIdentity();
+            const result = await api('/api/forum/posts', { method: 'POST', body });
+            closeModal($('#forum-compose-modal'));
+            $('#forum-kind-filter').value = '';
+            loadForum();
+            await openForumThread(result.id);
+        } catch (failure) {
+            showError(error, failure.message);
+        } finally {
+            setBusy(button, false);
+        }
+    }
+
+    async function submitForumReply(event) {
+        event.preventDefault();
+        const id = threadId;
+        const button = event.submitter;
+        const error = $('#forum-reply-error');
+        clearError(error);
+        setBusy(button, true);
+        try {
+            const body = Object.fromEntries(new FormData(event.target));
+            await ensurePostingIdentity();
+            const reply = await api(`/api/forum/posts/${id}/replies`, { method: 'POST', body });
+            if (threadId === id && $('#forum-thread-modal').classList.contains('is-open')) {
+                event.target.reset();
+                await openForumThread(id, true);
+            }
+            toast(`已发布到第 ${reply.floor} 楼`);
+            loadForum();
+        } catch (failure) {
+            showError(error, failure.message);
+        } finally {
+            setBusy(button, false);
+        }
     }
 
     /* ---------------- 档口详情 ---------------- */
@@ -1781,11 +1928,7 @@
                 for (const photo of [...ratingPhotos]) body.append('photos', await preparePhoto(photo));
             }
             const path = reviewId ? `/api/ratings/${reviewId}` : '/api/ratings';
-            if (!state.token && !localStorage.getItem('guestToken')) {
-                const guest = await api('/api/guest', { method: 'POST', auth: false });
-                localStorage.setItem('guestToken', 'Bearer ' + guest.token);
-                updateAuthUI();
-            }
+            await ensurePostingIdentity();
             await api(path, { method: reviewId ? 'PATCH' : 'POST', body });
 
             const reopenId = state.reopenDetailId;
@@ -2445,6 +2588,10 @@
         if (!modal) return;
         modal.classList.remove('is-open');
         modal.setAttribute('aria-hidden', 'true');
+        if (modal.id === 'forum-thread-modal') {
+            threadId = null;
+            forumThreadRequest++;
+        }
 
         if (modal.id === 'detail-modal') {
             state.detailId = null;
@@ -2480,6 +2627,11 @@
     /* ---------------- 事件 ---------------- */
 
     function bindEvents() {
+        $('#forum-kind-filter').addEventListener('change', () => loadForum());
+        $('#forum-more').addEventListener('click', () => loadForum(true));
+        $('#forum-more-replies').addEventListener('click', () => openForumThread(threadId, true));
+        $('#forum-compose-form').addEventListener('submit', submitForumPost);
+        $('#forum-reply-form').addEventListener('submit', submitForumReply);
         $('#campus-food-search').addEventListener('input', renderCampusFood);
         $('#campus-food-directory').addEventListener('click', event => {
             const button = event.target.closest('[data-campus-location]');
@@ -2660,6 +2812,23 @@
         const id = rawId && /^\d+$/.test(rawId) ? Number(rawId) : null;
 
         switch (action) {
+            case 'forum-compose':
+                $('#forum-compose-form').reset();
+                clearError($('#forum-compose-error'));
+                openModal($('#forum-compose-modal'));
+                break;
+            case 'forum-open':
+                if (id) openForumThread(id);
+                break;
+            case 'forum-delete':
+                if (id && window.confirm('删除这条帖子及其所有回复？')) {
+                    api(`/api/forum/posts/${id}`, { method: 'DELETE' }).then(() => {
+                        if (threadId === id) closeModal($('#forum-thread-modal'));
+                        toast('帖子已删除');
+                        loadForum();
+                    }).catch(error => toast(error.message, 'error'));
+                }
+                break;
             case 'edit-category':
                 toggleCategoryEdit(element, true);
                 break;
