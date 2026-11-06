@@ -240,6 +240,19 @@ async function route(request, env) {
             WHERE r.user_id=? AND r.is_deleted=0 ORDER BY r.created_at DESC,r.id DESC`, auth().id));
     }
 
+    match = /^\/api\/ratings\/(\d+)\/photos\/(legacy|\d+)$/.exec(path);
+    if (method === 'DELETE' && match) {
+        const user = auth();
+        const ratingId = Number(match[1]);
+        const photoId = match[2];
+        const result = photoId === 'legacy'
+            ? await q('UPDATE ratings SET photo=NULL WHERE id=? AND user_id=? AND is_deleted=0 AND photo IS NOT NULL', ratingId, user.id).run()
+            : await q(`DELETE FROM review_photos WHERE id=? AND rating_id IN
+                (SELECT id FROM ratings WHERE id=? AND user_id=? AND is_deleted=0)`, Number(photoId), ratingId, user.id).run();
+        if (!result.meta.changes) fail(404, '照片不存在');
+        return json({ msg: '照片已删除' });
+    }
+
     match = /^\/api\/ratings\/(\d+)$/.exec(path);
     if ((match && ['PATCH', 'DELETE'].includes(method)) || (path === '/api/ratings' && method === 'POST')) {
         const user = auth();

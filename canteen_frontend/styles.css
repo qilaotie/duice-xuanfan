@@ -1711,10 +1711,48 @@ textarea {
     gap: 8px;
 }
 
-.review-photo-gallery .review-photo {
+.review-photo-tile {
+    position: relative;
     width: min(140px, calc(50% - 4px));
+    margin-top: 8px;
+}
+
+.review-photo-tile a {
+    display: block;
+}
+
+.review-photo-tile .review-photo {
+    width: 100%;
+    margin: 0;
     aspect-ratio: 1;
     object-fit: cover;
+}
+
+.review-photo-delete {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #fff;
+    font: 700 20px/1 system-ui, sans-serif;
+    cursor: pointer;
+    isolation: isolate;
+}
+
+.review-photo-delete::before {
+    position: absolute;
+    z-index: -1;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, .75);
+    content: "";
 }
 
 .detail-photo {

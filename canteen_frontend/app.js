@@ -1174,9 +1174,33 @@
 
     function renderReviewPhotos(review) {
         const photos = reviewPhotoUrls(review);
-        if (photos.length === 1) return photoImage(photos[0], '评价照片', 'review-photo');
-        return photos.length ? `<div class="review-photo-gallery">${photos.map((url, index) =>
-            photoImage(url, `评价照片 ${index + 1}`, 'review-photo')).join('')}</div>` : '';
+        if (!photos.length) return '';
+        return `<div class="review-photo-gallery">${photos.map((url, index) => {
+            const match = /^\/api\/(?:review-photos\/(\d+)|photos\/ratings\/\d+)$/.exec(url);
+            const key = match ? match[1] || 'legacy' : '';
+            const fullUrl = (window.CANTEEN_API_ORIGIN || '') + url;
+            return `<div class="review-photo-tile">
+                <a href="${escapeHtml(fullUrl)}" target="_blank" rel="noopener" aria-label="查看评价照片 ${index + 1} 的大图">
+                    ${photoImage(url, `评价照片 ${index + 1}`, 'review-photo')}
+                </a>
+                ${review.is_mine && key ? `<button type="button" class="review-photo-delete" data-action="delete-review-photo"
+                    data-id="${Number(review.id)}" data-photo-key="${key}" aria-label="删除第 ${index + 1} 张照片">×</button>` : ''}
+            </div>`;
+        }).join('')}</div>`;
+    }
+
+    async function deleteReviewPhoto(id, button) {
+        if (!window.confirm('确定删除这张照片吗？')) return;
+        const detailId = state.detailId;
+        button.disabled = true;
+        try {
+            await api(`/api/ratings/${id}/photos/${button.dataset.photoKey}`, { method: 'DELETE' });
+            toast('照片已删除');
+            if (state.detailId === detailId) await openDetail(detailId);
+        } catch (error) {
+            toast(error.message, 'error');
+            button.disabled = false;
+        }
     }
 
     async function preparePhoto(photo, maxSide = 1400, maxBytes = 1_500_000) {
@@ -2297,6 +2321,9 @@
         const id = rawId && /^\d+$/.test(rawId) ? Number(rawId) : null;
 
         switch (action) {
+            case 'delete-review-photo':
+                if (id) deleteReviewPhoto(id, element);
+                break;
             case 'open-public-profile':
                 if (id) openPublicProfile(id);
                 break;

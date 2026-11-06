@@ -596,6 +596,26 @@ def my_ratings():
     } for rating, canteen, category_name in rows])
 
 
+@app.route("/api/ratings/<int:rating_id>/photos/<photo_id>", methods=["DELETE"])
+def delete_review_photo(rating_id, photo_id):
+    user = get_current_user()
+    if not user:
+        return jsonify({"msg": "请先登录"}), 401
+    owned = Rating.query.filter_by(id=rating_id, user_id=user.id, is_deleted=False)
+    if photo_id == "legacy":
+        removed = owned.filter(Rating.has_photo).update({Rating.photo: None}, synchronize_session=False)
+    elif re.fullmatch(r"[0-9]{1,15}", photo_id):
+        removed = ReviewPhoto.query.filter(
+            ReviewPhoto.id == int(photo_id), ReviewPhoto.rating_id.in_(owned.with_entities(Rating.id))
+        ).delete(synchronize_session=False)
+    else:
+        abort(404)
+    if not removed:
+        abort(404)
+    db.session.commit()
+    return jsonify({"msg": "照片已删除"})
+
+
 # 提交评分
 @app.route("/api/ratings", methods=["POST"])
 @app.route("/api/ratings/<int:rating_id>", methods=["PATCH", "DELETE"])
