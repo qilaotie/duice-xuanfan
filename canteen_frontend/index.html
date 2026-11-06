@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=review-photo-preview">
+    <link rel="stylesheet" href="styles.css?v=campus-layout">
 </head>
 <body>
 <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -137,14 +137,22 @@
             <button type="button" class="btn btn-primary" data-action="feedback-campus">＋ 推荐校内美食</button>
             <button type="button" class="btn btn-soft" data-action="open-rating">写一条评价</button>
         </div>
-        <section class="detail-panel stack" aria-label="校内美食目录">
-            <div class="panel-head"><h2>校内美食目录</h2><span id="campus-food-count" class="muted" role="status"></span></div>
-            <label class="field"><span>搜索校内美食</span>
-                <input type="search" id="campus-food-search" placeholder="输入店名、综合楼或楼层">
-            </label>
-            <div class="category-nav" id="campus-food-directory" aria-label="按楼层筛选"></div>
-        </section>
-        <div id="campus-food-list" class="stack" aria-live="polite"></div>
+        <div class="layout campus-layout">
+            <div class="content-head campus-content-head">
+                <div><h2>校内美食列表</h2><p id="campus-food-count" class="muted" role="status"></p></div>
+                <label class="search-box">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                        <circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path>
+                    </svg>
+                    <input type="search" id="campus-food-search" placeholder="搜索店名、楼宇或楼层…" aria-label="搜索校内美食">
+                </label>
+            </div>
+            <aside class="sidebar card campus-directory">
+                <div class="sidebar-head"><h2>按地点浏览</h2></div>
+                <div class="category-nav" id="campus-food-directory" aria-label="按楼层筛选"></div>
+            </aside>
+            <div id="campus-food-list" class="stack campus-results" aria-live="polite"></div>
+        </div>
     </section>
 
     <section class="view" id="view-ranking">
@@ -515,6 +523,6 @@
         </form>
     </div>
 </div>
-<script src="app.js?v=campus-directory" defer></script>
+<script src="app.js?v=campus-layout" defer></script>
 </body>
 </html>

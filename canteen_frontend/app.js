@@ -652,10 +652,11 @@
         const total = Array.from(entriesByLocation.values()).reduce((sum, entries) => sum + entries.length, 0);
         const directory = [{ id: '', name: '全部地点', count: total }, ...buildings.map(location =>
             ({ ...location, count: entriesByLocation.get(location.id).length }))];
-        $('#campus-food-directory').innerHTML = directory.map(location => {
+        $('#campus-food-directory').innerHTML = directory.map((location, index) => {
             const selected = String(location.id) === campusLocationFilter;
             return `<button type="button" class="category-btn${selected ? ' is-active' : ''}"
                 data-campus-location="${escapeHtml(location.id)}" aria-pressed="${selected}">
+                <span class="cat-dot" style="background:${index ? CATEGORY_DOTS[(index - 1) % CATEGORY_DOTS.length] : '#0f766e'}"></span>
                 <span class="cat-name">${escapeHtml(location.name)}</span><span class="cat-count">${location.count}</span>
             </button>`;
         }).join('');
