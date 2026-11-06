@@ -1705,6 +1705,18 @@ textarea {
     border-radius: 10px;
 }
 
+.review-photo-gallery {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.review-photo-gallery .review-photo {
+    width: min(140px, calc(50% - 4px));
+    aspect-ratio: 1;
+    object-fit: cover;
+}
+
 .detail-photo {
     width: 80px;
     height: 80px;

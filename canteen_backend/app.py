@@ -25,7 +25,7 @@ app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path='')
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///canteen.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-app.config['MAX_CONTENT_LENGTH'] = 6 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 7 * 1024 * 1024
 db = SQLAlchemy(app)
 CORS(app)
 
@@ -144,6 +144,14 @@ class Rating(db.Model):
     dish_scores = db.Column(db.JSON)
     is_deleted = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class ReviewPhoto(db.Model):
+    __tablename__ = "review_photos"
+    __table_args__ = (db.Index("review_photos_rating", "rating_id", "id"), {"sqlite_autoincrement": True})
+    id = db.Column(db.Integer, primary_key=True)
+    rating_id = db.Column(db.Integer, db.ForeignKey("ratings.id", ondelete="CASCADE"), nullable=False)
+    photo = deferred(db.Column(db.LargeBinary, nullable=False))
 
 
 class Report(db.Model):
@@ -396,6 +404,12 @@ def get_photo(kind, item_id):
     return send_file(BytesIO(item.photo), mimetype="image/jpeg", max_age=0)
 
 
+@app.route("/api/review-photos/<int:photo_id>")
+def get_review_photo(photo_id):
+    photo = ReviewPhoto.query.join(Rating).filter(ReviewPhoto.id == photo_id, Rating.is_deleted.is_(False)).first_or_404()
+    return send_file(BytesIO(photo.photo), mimetype="image/jpeg", max_age=0)
+
+
 @app.route("/api/admin/photos/<kind>/<int:item_id>", methods=["PUT", "DELETE"])
 def set_photo(kind, item_id):
     user, response, code = require_admin()
@@ -462,12 +476,21 @@ def get_canteen_detail(canteen_id):
         avg = None
 
     comments = []
+    photos_by_rating = {}
+    photo_ids = db.session.query(ReviewPhoto.rating_id, ReviewPhoto.id).join(Rating).filter(
+        Rating.canteen_id == c.id, Rating.is_deleted.is_(False)
+    ).order_by(ReviewPhoto.id).all()
+    for rating_id, photo_id in photo_ids:
+        photos_by_rating.setdefault(rating_id, []).append(url_for("get_review_photo", photo_id=photo_id))
     scores_by_dish = {}
     for r in ratings:
         for dish in r.dish_scores or []:
             scores_by_dish.setdefault(dish["id"], []).append(dish["score"])
         user = User.query.get(r.user_id)
         anonymous = not user or user.username.startswith("__guest_") or r.is_anonymous
+        photos = photos_by_rating.get(r.id, [])
+        if r.has_photo:
+            photos.insert(0, photo_url("ratings", r))
         comments.append({
             "id": r.id,
             "is_mine": viewer is not None and viewer.id == r.user_id,
@@ -478,7 +501,8 @@ def get_canteen_detail(canteen_id):
             "content": r.comment,
             "dish_name": r.dish_name,
             "dish_scores": r.dish_scores or [],
-            "photo_url": photo_url("ratings", r),
+            "photo_url": photos[0] if photos else None,
+            "photo_urls": photos,
             "score": r.score,
             "created_at": r.created_at.strftime("%Y-%m-%d %H:%M")
         })
@@ -586,15 +610,25 @@ def create_rating(rating_id=None):
         if request.method == "DELETE":
             canteen_id = rating.canteen_id
             Report.query.filter_by(comment_id=rating.id).delete()
+            ReviewPhoto.query.filter_by(rating_id=rating.id).delete()
             db.session.delete(rating)
             db.session.commit()
             record_canteen_history(canteen_id)
             return jsonify({"msg": "评价已撤回"})
 
+    photos = []
     try:
         if request.mimetype == "multipart/form-data":
             data = json.loads(request.form.get("rating", "{}"))
             photo = read_photo(request.files.get("photo"))
+            uploads = request.files.getlist("photos")
+            if len(uploads) > 4 or (photo and uploads):
+                raise ValueError("每条评价最多可上传 4 张照片")
+            for upload in uploads:
+                image = read_photo(upload)
+                if not image:
+                    raise ValueError("照片格式无效")
+                photos.append(image)
         else:
             data = request.get_json() or {}
             photo = None
@@ -637,6 +671,11 @@ def create_rating(rating_id=None):
 
     if rating is None and Rating.query.filter_by(user_id=user.id, canteen_id=canteen_id, is_deleted=False).first():
         return jsonify({"msg": "您已评价过该档口"}), 400
+    replace_photos = photo is not None or data.get("remove_photo") is True
+    if rating is not None and photos and not replace_photos:
+        saved_count = ReviewPhoto.query.filter_by(rating_id=rating.id).count() + int(rating.has_photo)
+        if saved_count + len(photos) > 4:
+            return jsonify({"msg": "每条评价最多可上传 4 张照片"}), 400
 
     dish_name = rating.dish_name if rating else None
     dish_scores = []
@@ -672,8 +711,13 @@ def create_rating(rating_id=None):
     rating.dish_name = dish_name
     rating.is_anonymous = anonymous
     rating.dish_scores = dish_scores
-    if photo is not None or data.get("remove_photo") is True:
+    if replace_photos:
+        if rating.id is not None:
+            ReviewPhoto.query.filter_by(rating_id=rating.id).delete()
         rating.photo = photo
+    if photos:
+        db.session.flush()
+        db.session.add_all(ReviewPhoto(rating_id=rating.id, photo=image) for image in photos)
     db.session.commit()
     # 记录档口历史平均分（用于折线图）
     try:
@@ -1032,6 +1076,7 @@ def admin_delete_canteen(canteen_id):
     rating_ids = [r.id for r in Rating.query.filter_by(canteen_id=canteen_id).all()]
     if rating_ids:
         Report.query.filter(Report.comment_id.in_(rating_ids)).delete(synchronize_session=False)
+        ReviewPhoto.query.filter(ReviewPhoto.rating_id.in_(rating_ids)).delete(synchronize_session=False)
         Rating.query.filter(Rating.id.in_(rating_ids)).delete(synchronize_session=False)
     RatingHistory.query.filter_by(canteen_id=canteen_id).delete(synchronize_session=False)
     Dish.query.filter_by(canteen_id=canteen_id).delete(synchronize_session=False)

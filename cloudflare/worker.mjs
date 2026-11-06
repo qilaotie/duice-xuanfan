@@ -31,7 +31,7 @@ async function body(request) {
 }
 
 async function form(request) {
-    if (Number(request.headers.get('content-length')) > 6_000_000) fail(413, '照片过大');
+    if (Number(request.headers.get('content-length')) > 7_000_000) fail(413, '照片过大');
     try { return await request.formData(); } catch { fail(400, '上传格式无效'); }
 }
 
@@ -180,7 +180,9 @@ async function route(request, env) {
             q('SELECT id,name,photo IS NOT NULL has_photo FROM dishes WHERE canteen_id=? ORDER BY name', id),
             q(`SELECT r.id,r.user_id,u.nickname,u.username GLOB '__guest_*' is_guest,
                 u.avatar IS NOT NULL has_avatar,r.is_anonymous,r.score,r.comment,r.created_at,r.dish_name,r.dish_scores,
-                r.photo IS NOT NULL has_photo FROM ratings r JOIN users u ON u.id=r.user_id
+                r.photo IS NOT NULL has_photo,
+                (SELECT json_group_array(id) FROM (SELECT id FROM review_photos WHERE rating_id=r.id ORDER BY id)) photo_ids
+                FROM ratings r JOIN users u ON u.id=r.user_id
                 WHERE r.canteen_id=? AND r.is_deleted=0 ORDER BY r.created_at DESC,r.id DESC`, id),
             q('SELECT created_at,avg_score,rating_count FROM rating_history WHERE canteen_id=? ORDER BY created_at', id)
         ].slice(0, match[2] ? 2 : 4));
@@ -196,11 +198,13 @@ async function route(request, env) {
                 scores.get(dish.id).push(dish.score);
             }
             const anonymous = Boolean(row.is_anonymous || row.is_guest);
+            const photos = JSON.parse(row.photo_ids).map(id => `/api/review-photos/${id}`);
+            if (row.has_photo) photos.unshift(photoUrl('ratings', row));
             return { id: row.id, user: anonymous ? '匿名同学' : row.nickname || '同学',
                 avatar_url: !anonymous && row.has_avatar ? `/api/avatars/${row.user_id}` : null,
                 author_id: anonymous ? null : row.user_id, is_anonymous: anonymous, is_mine: viewer?.id === row.user_id,
                 content: row.comment, score: row.score, created_at: minute(row.created_at), dish_name: row.dish_name,
-                dish_scores: dishScores, photo_url: photoUrl('ratings', row) };
+                dish_scores: dishScores, photo_url: photos[0] ?? null, photo_urls: photos };
         });
         const mean = values => values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) * 100 / values.length) / 100 : null;
         for (const dish of dishes) {
@@ -211,6 +215,14 @@ async function route(request, env) {
         return json({ ...stall, score: mean(comments.map(row => row.score)), comments, dishes,
             photo_url: photoUrl('canteens', stall),
             history: historyResult.results.map(row => ({ ...row, date: minute(row.created_at) })) });
+    }
+
+    match = /^\/api\/review-photos\/(\d+)$/.exec(path);
+    if (method === 'GET' && match) {
+        const row = await first(`SELECT p.photo FROM review_photos p JOIN ratings r ON r.id=p.rating_id
+            WHERE p.id=? AND r.is_deleted=0`, Number(match[1]));
+        if (!row) fail(404, '照片不存在');
+        return new Response(new Uint8Array(row.photo), { headers: { 'Content-Type': 'image/jpeg', 'X-Content-Type-Options': 'nosniff' } });
     }
 
     match = /^\/api\/photos\/(canteens|dishes|ratings)\/(\d+)$/.exec(path);
@@ -243,10 +255,18 @@ async function route(request, env) {
             return json({ msg: '评价已撤回' });
         }
         let data, photo;
+        const photos = [];
         if (request.headers.get('content-type')?.startsWith('multipart/form-data')) {
             const fields = await form(request);
             try { data = JSON.parse(fields.get('rating')); } catch { fail(400, '评价格式无效'); }
             photo = await photoBytes(fields.get('photo'));
+            const uploads = fields.getAll('photos');
+            if (uploads.length > 4 || (photo && uploads.length)) fail(400, '每条评价最多可上传 4 张照片');
+            for (const upload of uploads) {
+                const bytes = await photoBytes(upload);
+                if (!bytes) fail(400, '照片格式无效');
+                photos.push(bytes);
+            }
         } else data = await body(request);
         if (!data || typeof data !== 'object' || Array.isArray(data)) fail(400, '评价格式无效');
         if ('is_anonymous' in data && typeof data.is_anonymous !== 'boolean') fail(400, '匿名设置无效');
@@ -279,6 +299,10 @@ async function route(request, env) {
         const dishSql = `(SELECT COALESCE(json_group_array(json_object('id',d.id,'name',d.name,'score',json_extract(j.value,'$.score'))),'[]')
             FROM json_each(?) j JOIN dishes d ON d.canteen_id=? AND d.name=json_extract(j.value,'$.name'))`;
         if (id) {
+            if (photo || data.remove_photo === true) {
+                writes.push(q(`DELETE FROM review_photos WHERE rating_id IN
+                    (SELECT id FROM ratings WHERE id=? AND user_id=? AND is_deleted=0)`, id, user.id));
+            }
             writes.push(q(`UPDATE ratings SET score=?,comment=?,is_anonymous=?,dish_scores=${dishSql},
                 photo=CASE WHEN ? THEN ? ELSE photo END WHERE id=? AND user_id=? AND is_deleted=0`,
                 ratingScore, comment, anonymous, JSON.stringify(dishes), stall, Number(Boolean(photo || data.remove_photo === true)), photo ?? null, id, user.id));
@@ -286,13 +310,20 @@ async function route(request, env) {
             writes.push(q(`INSERT INTO ratings (user_id,canteen_id,score,comment,is_deleted,is_anonymous,created_at,dish_scores,photo)
                 VALUES (?,?,?,?,0,?,?,${dishSql},?)`, user.id, stall, ratingScore, comment, anonymous, now(), JSON.stringify(dishes), stall, photo ?? null));
         }
+        const ratingWrite = writes.length - 1;
+        for (const bytes of photos) {
+            writes.push(q(`INSERT INTO review_photos (rating_id,photo)
+                SELECT id,? FROM ratings WHERE user_id=? AND canteen_id=? AND is_deleted=0 AND (? IS NULL OR id=?)`,
+                bytes, user.id, stall, id, id));
+        }
         writes.push(history(q, stall));
         let result;
         try { result = await batch(writes); } catch (error) {
             if (String(error).includes('ratings.user_id, ratings.canteen_id')) fail(409, '您已评价过该档口');
+            if (String(error).includes('review photo limit')) fail(400, '每条评价最多可上传 4 张照片');
             throw error;
         }
-        if (!result.at(-2).meta.changes) fail(404, '评价不存在');
+        if (!result[ratingWrite].meta.changes) fail(404, '评价不存在');
         return json({ msg: id ? '评价已更新' : '评分成功' });
     }
 

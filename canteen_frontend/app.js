@@ -1100,7 +1100,7 @@
                         ${(comment.dish_scores || []).map(dish => `<p class="comment-text">${escapeHtml(dish.name)} · ${escapeHtml(dish.score)} 分</p>`).join('')}
                         ${comment.dish_name ? `<p class="comment-text"><strong>菜品：</strong>${escapeHtml(comment.dish_name)}</p>` : ''}
                         <p class="comment-text">${escapeHtml(comment.content || '（无文字评价）')}</p>
-                        ${photoImage(comment.photo_url, '评价照片', 'review-photo')}
+                        ${renderReviewPhotos(comment)}
                         <div class="comment-actions">
                             ${comment.is_mine ? `
                                 <button type="button" class="link-btn" data-action="edit-review" data-id="${Number(comment.id)}">修改</button>
@@ -1166,6 +1166,17 @@
 
     function photoImage(url, alt, className = 'detail-photo') {
         return url ? `<img class="${className}" src="${escapeHtml((window.CANTEEN_API_ORIGIN || '') + url)}" alt="${escapeHtml(alt)}" loading="lazy">` : '';
+    }
+
+    function reviewPhotoUrls(review) {
+        return review?.photo_urls ?? (review?.photo_url ? [review.photo_url] : []);
+    }
+
+    function renderReviewPhotos(review) {
+        const photos = reviewPhotoUrls(review);
+        if (photos.length === 1) return photoImage(photos[0], '评价照片', 'review-photo');
+        return photos.length ? `<div class="review-photo-gallery">${photos.map((url, index) =>
+            photoImage(url, `评价照片 ${index + 1}`, 'review-photo')).join('')}</div>` : '';
     }
 
     async function preparePhoto(photo, maxSide = 1400, maxBytes = 1_500_000) {
@@ -1326,9 +1337,11 @@
         setRatingScore(review?.score ?? 5);
         $('#rating-comment').value = review?.content || '';
         $('#rating-photo').value = '';
-        updateRatingPhotoPicker();
+        ratingPhotos = [];
+        savedRatingPhotoCount = reviewPhotoUrls(review).length;
         $('#rating-remove-photo').checked = false;
-        $('#rating-remove-photo-field').hidden = !review?.photo_url;
+        $('#rating-remove-photo-field').hidden = !savedRatingPhotoCount;
+        updateRatingPhotoPicker();
         $('#rating-anonymous-field').hidden = !state.token;
         $('#rating-anonymous').checked = Boolean(review?.is_anonymous);
         clearError($('#rating-error'));
@@ -1527,17 +1540,19 @@
         });
     }
 
+    let ratingPhotos = [];
+    let savedRatingPhotoCount = 0;
+
+    function ratingPhotoCount() {
+        return ratingPhotos.length + ($('#rating-remove-photo').checked ? 0 : savedRatingPhotoCount);
+    }
+
     function updateRatingPhotoPicker() {
-        const input = $('#rating-photo');
-        const photo = input.files[0];
-        if (photo && photo.size > 5 * 1024 * 1024) {
-            input.value = '';
-            showError($('#rating-error'), '照片不能超过 5 MB，请重新选择');
-        }
-        const selected = input.files[0];
-        $('#rating-photo-label').textContent = selected ? '更换评价照片' : '添加评价照片';
-        $('#rating-photo-hint').textContent = selected ? selected.name : '可选，最多 5 MB';
-        $('#rating-photo-clear').hidden = !selected;
+        const count = ratingPhotoCount();
+        $('#rating-photo-hint').textContent = count
+            ? `共 ${count}/4 张，新增 ${ratingPhotos.length} 张`
+            : '可选，最多 4 张，每张不超过 5 MB';
+        $('#rating-photo-clear').hidden = !ratingPhotos.length;
     }
 
     async function submitRating(event) {
@@ -1570,6 +1585,10 @@
             showError(errorElement, '请输入新菜品名称');
             return;
         }
+        if (ratingPhotoCount() > 4) {
+            showError(errorElement, '每条评价最多可上传 4 张照片');
+            return;
+        }
 
         setBusy(button, true);
         try {
@@ -1581,12 +1600,11 @@
                 remove_photo: $('#rating-remove-photo').checked,
                 is_anonymous: !state.token || $('#rating-anonymous').checked
             };
-            const photo = $('#rating-photo').files[0];
             let body = rating;
-            if (photo) {
+            if (ratingPhotos.length) {
                 body = new FormData();
                 body.append('rating', JSON.stringify(rating));
-                body.append('photo', await preparePhoto(photo));
+                for (const photo of [...ratingPhotos]) body.append('photos', await preparePhoto(photo));
             }
             const path = reviewId ? `/api/ratings/${reviewId}` : '/api/ratings';
             if (!state.token && !localStorage.getItem('guestToken')) {
@@ -2189,14 +2207,29 @@
             if (photo) changeProfileAvatar(photo);
         });
         $('#profile-avatar-remove').addEventListener('click', () => changeProfileAvatar(null));
-        $('#rating-photo').addEventListener('change', () => {
-            clearError($('#rating-error'));
+        $('#rating-photo').addEventListener('change', event => {
+            const input = event.target;
+            const files = Array.from(input.files);
+            const error = $('#rating-error');
+            input.value = '';
+            clearError(error);
+            if (files.some(file => file.size > 5 * 1024 * 1024)) {
+                showError(error, '每张照片不能超过 5 MB，请重新选择');
+                return;
+            }
+            if (ratingPhotoCount() + files.length > 4) {
+                showError(error, '每条评价最多可上传 4 张照片');
+                return;
+            }
+            ratingPhotos.push(...files);
             updateRatingPhotoPicker();
         });
         $('#rating-photo-clear').addEventListener('click', () => {
-            $('#rating-photo').value = '';
+            ratingPhotos = [];
+            clearError($('#rating-error'));
             updateRatingPhotoPicker();
         });
+        $('#rating-remove-photo').addEventListener('change', updateRatingPhotoPicker);
         $('#my-reviews-btn').addEventListener('click', openMyReviews);
         $('#nickname-form').addEventListener('submit', saveNickname);
         $('#detail-content').addEventListener('change', event => {

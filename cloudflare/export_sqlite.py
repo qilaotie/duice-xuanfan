@@ -4,7 +4,7 @@ import argparse
 import sqlite3
 from pathlib import Path
 
-TABLES = ("categories", "canteens", "dishes", "users", "ratings", "reports", "admin_actions", "rating_history")
+TABLES = ("categories", "canteens", "dishes", "users", "ratings", "review_photos", "reports", "admin_actions", "rating_history")
 
 
 def main():
@@ -24,7 +24,13 @@ def main():
         with args.output.open("x", encoding="utf-8", newline="\n") as output:
             for table in TABLES:
                 columns = [row[1] for row in db.execute(f"PRAGMA table_info({table})")]
-                expressions = ", ".join("NULL" if column in {"token", "photo", "avatar"} else f'quote("{column}")' for column in columns)
+                if not columns:
+                    continue
+                expressions = ", ".join(
+                    "quote(X'')" if table == "review_photos" and column == "photo"
+                    else "NULL" if column in {"token", "photo", "avatar"}
+                    else f'quote("{column}")' for column in columns
+                )
                 for row in db.execute(f"SELECT {expressions} FROM {table} ORDER BY id"):
                     values = ", ".join(value if value is not None else "NULL" for value in row)
                     output.write(f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({values});\n")
