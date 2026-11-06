@@ -46,10 +46,10 @@ async function photoBytes(upload) {
     return data;
 }
 
-function nickname(value) {
-    const name = getText(value, 24, '昵称');
-    if (sensitive(name) || /[\p{Cc}\p{Cf}]/u.test(name)) fail(400, '昵称包含不合规字符');
-    return name || null;
+function profileText(value, max, label) {
+    const text = getText(value, max, label);
+    if (sensitive(text) || /[\p{Cc}\p{Cf}]/u.test(text)) fail(400, label + '包含不合规字符');
+    return text || null;
 }
 
 function score(value) {
@@ -74,7 +74,7 @@ async function route(request, env) {
     const all = async (sql, ...args) => (await q(sql, ...args).all()).results;
     const batch = statements => env.DB.batch(statements);
     const token = /^Bearer ([a-f0-9]{32})$/.exec(request.headers.get('Authorization') || '')?.[1];
-    const viewer = token ? await first('SELECT id, username, nickname, is_admin FROM users WHERE token=?', token) : null;
+    const viewer = token ? await first('SELECT id,username,nickname,taste,birthplace,is_admin FROM users WHERE token=?', token) : null;
     const auth = () => { if (!viewer) fail(401, '请先登录'); return viewer; };
 
     if (method === 'GET' && path === '/api/health') {
@@ -96,7 +96,7 @@ async function route(request, env) {
         if (path === '/api/register') {
             if (typeof data.confirm_password !== 'string' || data.confirm_password.trim() !== password) fail(400, '两次输入的密码不一致');
             if (user || username.toLowerCase() === 'admin' || username.toLowerCase().startsWith('__guest_')) fail(409, '该账号不可注册');
-            const name = nickname(data.nickname ?? '');
+            const name = profileText(data.nickname ?? '', 24, '昵称');
             user = await first(`INSERT INTO users (username,password,is_admin,token,nickname)
                 VALUES (?,?,0,?,?) ON CONFLICT(username) DO NOTHING RETURNING *`,
                 username, await passwordHash(password), randomBytes(16).toString('hex'), name);
@@ -118,11 +118,29 @@ async function route(request, env) {
 
     if (path === '/api/profile' && ['GET', 'PATCH'].includes(method)) {
         const user = auth();
+        if (user.username.startsWith('__guest_')) fail(403, '访客没有公开资料');
         if (method === 'PATCH') {
-            user.nickname = nickname((await body(request)).nickname);
-            await q('UPDATE users SET nickname=? WHERE id=?', user.nickname, user.id).run();
+            const data = await body(request);
+            if ('nickname' in data) user.nickname = profileText(data.nickname, 24, '昵称');
+            if ('taste' in data) user.taste = profileText(data.taste, 80, '口味偏好');
+            if ('birthplace' in data) user.birthplace = profileText(data.birthplace, 40, '出生地');
+            await q('UPDATE users SET nickname=?,taste=?,birthplace=? WHERE id=?',
+                user.nickname, user.taste, user.birthplace, user.id).run();
         }
-        return json({ nickname: user.nickname });
+        return json({ nickname: user.nickname, taste: user.taste, birthplace: user.birthplace });
+    }
+
+    const profileMatch = /^\/api\/users\/(\d+)$/.exec(path);
+    if (method === 'GET' && profileMatch) {
+        const id = Number(profileMatch[1]);
+        const profile = await first(`SELECT nickname,taste,birthplace FROM users
+            WHERE id=? AND username NOT GLOB '__guest_*'`, id);
+        if (!profile) fail(404, '用户不存在');
+        const rows = await all(`SELECT r.id,r.canteen_id,c.name canteen_name,r.score,r.comment content,
+            r.dish_name,r.dish_scores,substr(r.created_at,1,16) created_at
+            FROM ratings r JOIN canteens c ON c.id=r.canteen_id
+            WHERE r.user_id=? AND r.is_deleted=0 AND r.is_anonymous=0 ORDER BY r.created_at DESC,r.id DESC`, id);
+        return json({ ...profile, reviews: rows.map(row => ({ ...row, dish_scores: decodeScores(row.dish_scores) })) });
     }
 
     if (method === 'GET' && path === '/api/categories') return json(await all('SELECT * FROM categories ORDER BY id'));
@@ -141,7 +159,8 @@ async function route(request, env) {
             q(`SELECT c.id,c.name,c.category_id,g.name category_name,c.photo IS NOT NULL has_photo
                 FROM canteens c LEFT JOIN categories g ON g.id=c.category_id WHERE c.id=?`, id),
             q('SELECT id,name,photo IS NOT NULL has_photo FROM dishes WHERE canteen_id=? ORDER BY name', id),
-            q(`SELECT r.id,r.user_id,u.nickname,r.score,r.comment,r.created_at,r.dish_name,r.dish_scores,
+            q(`SELECT r.id,r.user_id,u.nickname,u.username GLOB '__guest_*' is_guest,
+                r.is_anonymous,r.score,r.comment,r.created_at,r.dish_name,r.dish_scores,
                 r.photo IS NOT NULL has_photo FROM ratings r JOIN users u ON u.id=r.user_id
                 WHERE r.canteen_id=? AND r.is_deleted=0 ORDER BY r.created_at DESC,r.id DESC`, id),
             q('SELECT created_at,avg_score,rating_count FROM rating_history WHERE canteen_id=? ORDER BY created_at', id)
@@ -157,7 +176,9 @@ async function route(request, env) {
                 if (!scores.has(dish.id)) scores.set(dish.id, []);
                 scores.get(dish.id).push(dish.score);
             }
-            return { id: row.id, user: row.nickname || '匿名同学', is_mine: viewer?.id === row.user_id,
+            const anonymous = Boolean(row.is_anonymous || row.is_guest);
+            return { id: row.id, user: anonymous ? '匿名同学' : row.nickname || '同学',
+                author_id: anonymous ? null : row.user_id, is_anonymous: anonymous, is_mine: viewer?.id === row.user_id,
                 content: row.comment, score: row.score, created_at: minute(row.created_at), dish_name: row.dish_name,
                 dish_scores: dishScores, photo_url: photoUrl('ratings', row) };
         });
@@ -191,7 +212,7 @@ async function route(request, env) {
     if ((match && ['PATCH', 'DELETE'].includes(method)) || (path === '/api/ratings' && method === 'POST')) {
         const user = auth();
         const id = match ? Number(match[1]) : null;
-        const existing = id ? await first('SELECT id,canteen_id,dish_name FROM ratings WHERE id=? AND user_id=? AND is_deleted=0', id, user.id) : null;
+        const existing = id ? await first('SELECT id,canteen_id,is_anonymous FROM ratings WHERE id=? AND user_id=? AND is_deleted=0', id, user.id) : null;
         if (id && !existing) fail(404, '评价不存在');
         if (method === 'DELETE') {
             await batch([
@@ -208,6 +229,8 @@ async function route(request, env) {
             photo = await photoBytes(fields.get('photo'));
         } else data = await body(request);
         if (!data || typeof data !== 'object' || Array.isArray(data)) fail(400, '评价格式无效');
+        if ('is_anonymous' in data && typeof data.is_anonymous !== 'boolean') fail(400, '匿名设置无效');
+        const anonymous = Number(user.username.startsWith('__guest_') || (data.is_anonymous ?? Boolean(existing?.is_anonymous)));
         const stall = existing?.canteen_id ?? Number(data.canteen_id);
         const ratingScore = score(data.score);
         const comment = getText(data.comment ?? '', 500, '评论');
@@ -236,12 +259,12 @@ async function route(request, env) {
         const dishSql = `(SELECT COALESCE(json_group_array(json_object('id',d.id,'name',d.name,'score',json_extract(j.value,'$.score'))),'[]')
             FROM json_each(?) j JOIN dishes d ON d.canteen_id=? AND d.name=json_extract(j.value,'$.name'))`;
         if (id) {
-            writes.push(q(`UPDATE ratings SET score=?,comment=?,dish_scores=${dishSql},
+            writes.push(q(`UPDATE ratings SET score=?,comment=?,is_anonymous=?,dish_scores=${dishSql},
                 photo=CASE WHEN ? THEN ? ELSE photo END WHERE id=? AND user_id=? AND is_deleted=0`,
-                ratingScore, comment, JSON.stringify(dishes), stall, Number(Boolean(photo || data.remove_photo === true)), photo ?? null, id, user.id));
+                ratingScore, comment, anonymous, JSON.stringify(dishes), stall, Number(Boolean(photo || data.remove_photo === true)), photo ?? null, id, user.id));
         } else {
-            writes.push(q(`INSERT INTO ratings (user_id,canteen_id,score,comment,is_deleted,created_at,dish_scores,photo)
-                VALUES (?,?,?,?,0,?,${dishSql},?)`, user.id, stall, ratingScore, comment, now(), JSON.stringify(dishes), stall, photo ?? null));
+            writes.push(q(`INSERT INTO ratings (user_id,canteen_id,score,comment,is_deleted,is_anonymous,created_at,dish_scores,photo)
+                VALUES (?,?,?,?,0,?,?,${dishSql},?)`, user.id, stall, ratingScore, comment, anonymous, now(), JSON.stringify(dishes), stall, photo ?? null));
         }
         writes.push(history(q, stall));
         let result;

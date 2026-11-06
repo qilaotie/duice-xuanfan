@@ -397,6 +397,8 @@
         try {
             const data = await api('/api/profile');
             $('#nickname-input').value = data.nickname || '';
+            $('#profile-taste').value = data.taste || '';
+            $('#profile-birthplace').value = data.birthplace || '';
             clearError($('#nickname-error'));
             openModal($('#nickname-modal'));
         } catch (error) {
@@ -413,7 +415,11 @@
         try {
             const data = await api('/api/profile', {
                 method: 'PATCH',
-                body: { nickname: $('#nickname-input').value }
+                body: {
+                    nickname: $('#nickname-input').value,
+                    taste: $('#profile-taste').value,
+                    birthplace: $('#profile-birthplace').value
+                }
             });
             state.nickname = data.nickname || '';
             localStorage.setItem('nickname', state.nickname);
@@ -424,6 +430,38 @@
             showError(errorElement, error.message);
         } finally {
             setBusy(button, false);
+        }
+    }
+
+    let publicProfileRequest = 0;
+
+    async function openPublicProfile(id) {
+        const requestId = ++publicProfileRequest;
+        const modal = $('#public-profile-modal');
+        const title = $('#public-profile-title');
+        const content = $('#public-profile-content');
+        title.textContent = '个人资料';
+        content.textContent = '正在加载…';
+        openModal(modal);
+        try {
+            const profile = await api(`/api/users/${id}`, { auth: false });
+            if (requestId !== publicProfileRequest) return;
+            title.textContent = profile.nickname || '同学';
+            content.innerHTML = `
+                <p>口味偏好：${escapeHtml(profile.taste || '未填写')}</p>
+                <p>出生地：${escapeHtml(profile.birthplace || '未填写')}</p>
+                <h3>历史评价</h3>
+                ${profile.reviews.length ? profile.reviews.map(review => `
+                    <article class="detail-panel">
+                        <button type="button" class="link-btn" data-action="profile-review-stall" data-id="${Number(review.canteen_id)}">${escapeHtml(review.canteen_name)}</button>
+                        <p class="muted">${escapeHtml(review.created_at)} · ${escapeHtml(review.score)} 分</p>
+                        <p class="comment-text">${escapeHtml(review.content || '（无文字评价）')}</p>
+                        ${review.dish_name ? `<p class="comment-text">${escapeHtml(review.dish_name)}</p>` : ''}
+                        ${review.dish_scores.map(dish => `<p class="comment-text">${escapeHtml(dish.name)} · ${escapeHtml(dish.score)} 分</p>`).join('')}
+                    </article>`).join('') : '<p class="muted">暂无公开评价。</p>'}
+            `;
+        } catch (error) {
+            if (requestId === publicProfileRequest) content.textContent = error.message;
         }
     }
 
@@ -1011,7 +1049,9 @@
                     <div class="comment-avatar">${escapeHtml(initialOf(comment.user))}</div>
                     <div class="comment-main">
                         <div class="comment-head">
-                            <span class="comment-user">${escapeHtml(comment.user || '匿名用户')}</span>
+                            ${comment.author_id
+                                ? `<button type="button" class="link-btn comment-user" data-action="open-public-profile" data-id="${Number(comment.author_id)}">${escapeHtml(comment.user)}</button>`
+                                : `<span class="comment-user">${escapeHtml(comment.user || '匿名用户')}</span>`}
                             <span class="comment-time">${escapeHtml(comment.created_at)}</span>
                             <span class="stars stars-sm">${starsHtml(comment.score)}</span>
                         </div>
@@ -1244,6 +1284,8 @@
         $('#rating-photo').value = '';
         $('#rating-remove-photo').checked = false;
         $('#rating-remove-photo-field').hidden = !review?.photo_url;
+        $('#rating-anonymous-field').hidden = !state.token;
+        $('#rating-anonymous').checked = Boolean(review?.is_anonymous);
         clearError($('#rating-error'));
         openModal($('#rating-modal'));
     }
@@ -1478,7 +1520,8 @@
                 score,
                 comment,
                 dish_scores: dishScores,
-                remove_photo: $('#rating-remove-photo').checked
+                remove_photo: $('#rating-remove-photo').checked,
+                is_anonymous: !state.token || $('#rating-anonymous').checked
             };
             const photo = $('#rating-photo').files[0];
             let body = rating;
@@ -2150,6 +2193,13 @@
         const id = rawId && /^\d+$/.test(rawId) ? Number(rawId) : null;
 
         switch (action) {
+            case 'open-public-profile':
+                if (id) openPublicProfile(id);
+                break;
+            case 'profile-review-stall':
+                closeModal($('#public-profile-modal'));
+                if (id) openDetail(id);
+                break;
             case 'edit-my-review':
                 if (id) editMyReview(id, element);
                 break;

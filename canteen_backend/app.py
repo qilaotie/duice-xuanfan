@@ -95,6 +95,8 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), unique=True, nullable=False)
     nickname = db.Column(db.String(24))
+    taste = db.Column(db.String(80))
+    birthplace = db.Column(db.String(40))
     password = db.Column(db.String(200), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)  # 是否管理员
     token = db.Column(db.String(64), unique=True, nullable=True)
@@ -136,6 +138,7 @@ class Rating(db.Model):
     score = db.Column(db.Float, nullable=False)
     comment = db.Column(db.Text)
     dish_name = db.Column(db.String(80))
+    is_anonymous = db.Column(db.Boolean, nullable=False, default=False)
     dish_scores = db.Column(db.JSON)
     is_deleted = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -279,12 +282,12 @@ def login():
     return jsonify({"token": user.token, "is_admin": user.is_admin, "nickname": user.nickname})
 
 
-def validate_nickname(value):
+def validate_nickname(value, max_length=24, label="昵称"):
     if not isinstance(value, str):
-        raise ValueError("昵称格式无效")
+        raise ValueError(f"{label}格式无效")
     nickname = value.strip()
-    if nickname and (len(nickname) > 24 or not nickname.isprintable() or contains_sensitive(nickname)):
-        raise ValueError("请输入 24 字以内的合规昵称")
+    if nickname and (len(nickname) > max_length or not nickname.isprintable() or contains_sensitive(nickname)):
+        raise ValueError(f"请输入 {max_length} 字以内的合规{label}")
     return nickname or None
 
 
@@ -293,14 +296,37 @@ def profile():
     user = get_current_user()
     if not user:
         return jsonify({"msg": "请先登录"}), 401
+    if user.username.startswith("__guest_"):
+        return jsonify({"msg": "访客没有公开资料"}), 403
     if request.method == "PATCH":
         data = request.get_json() or {}
         try:
-            user.nickname = validate_nickname(data.get("nickname"))
+            for key, size, label in (("nickname", 24, "昵称"), ("taste", 80, "口味偏好"), ("birthplace", 40, "出生地")):
+                if key in data:
+                    setattr(user, key, validate_nickname(data[key], size, label))
         except ValueError as exc:
             return jsonify({"msg": str(exc)}), 400
         db.session.commit()
-    return jsonify({"nickname": user.nickname})
+    return jsonify({"nickname": user.nickname, "taste": user.taste, "birthplace": user.birthplace})
+
+
+@app.route("/api/users/<int:user_id>")
+def public_profile(user_id):
+    user = db.session.get(User, user_id)
+    if not user or user.username.startswith("__guest_"):
+        abort(404)
+    rows = db.session.query(Rating, Canteen.name).join(Canteen, Rating.canteen_id == Canteen.id).filter(
+        Rating.user_id == user_id, Rating.is_deleted.is_(False), Rating.is_anonymous.is_(False)
+    ).order_by(Rating.created_at.desc(), Rating.id.desc()).all()
+    return jsonify({
+        "nickname": user.nickname, "taste": user.taste, "birthplace": user.birthplace,
+        "reviews": [{
+            "id": rating.id, "canteen_id": rating.canteen_id, "canteen_name": name,
+            "score": rating.score, "content": rating.comment, "dish_name": rating.dish_name,
+            "dish_scores": rating.dish_scores or [],
+            "created_at": rating.created_at.strftime("%Y-%m-%d %H:%M")
+        } for rating, name in rows]
+    })
 
 
 PHOTO_MODELS = {"canteens": Canteen, "dishes": Dish, "ratings": Rating}
@@ -409,10 +435,13 @@ def get_canteen_detail(canteen_id):
         for dish in r.dish_scores or []:
             scores_by_dish.setdefault(dish["id"], []).append(dish["score"])
         user = User.query.get(r.user_id)
+        anonymous = not user or user.username.startswith("__guest_") or r.is_anonymous
         comments.append({
             "id": r.id,
             "is_mine": viewer is not None and viewer.id == r.user_id,
-            "user": (user.nickname if user else None) or "匿名同学",
+            "user": "匿名同学" if anonymous else user.nickname or "同学",
+            "author_id": None if anonymous else user.id,
+            "is_anonymous": anonymous,
             "content": r.comment,
             "dish_name": r.dish_name,
             "dish_scores": r.dish_scores or [],
@@ -540,6 +569,9 @@ def create_rating(rating_id=None):
             raise ValueError("评价格式无效")
     except ValueError as exc:
         return jsonify({"msg": str(exc)}), 400
+    if "is_anonymous" in data and not isinstance(data["is_anonymous"], bool):
+        return jsonify({"msg": "匿名设置无效"}), 400
+    anonymous = user.username.startswith("__guest_") or data.get("is_anonymous", bool(rating and rating.is_anonymous))
     canteen_id = rating.canteen_id if rating else data.get("canteen_id")
     score = data.get("score")
     comment = data.get("comment", "")
@@ -605,6 +637,7 @@ def create_rating(rating_id=None):
     rating.score = score
     rating.comment = comment
     rating.dish_name = dish_name
+    rating.is_anonymous = anonymous
     rating.dish_scores = dish_scores
     if photo is not None or data.get("remove_photo") is True:
         rating.photo = photo
@@ -1050,6 +1083,10 @@ def ensure_db_schema():
         user_columns = db.session.execute(text("PRAGMA table_info(users)")).fetchall()
         if not any(column[1] == "nickname" for column in user_columns):
             db.session.execute(text("ALTER TABLE users ADD COLUMN nickname VARCHAR(24)"))
+        if not any(column[1] == "taste" for column in user_columns):
+            db.session.execute(text("ALTER TABLE users ADD COLUMN taste VARCHAR(80)"))
+        if not any(column[1] == "birthplace" for column in user_columns):
+            db.session.execute(text("ALTER TABLE users ADD COLUMN birthplace VARCHAR(40)"))
         for table in ("canteens", "dishes", "ratings"):
             columns = db.session.execute(text(f"PRAGMA table_info({table})")).fetchall()
             if columns and not any(column[1] == "photo" for column in columns):
@@ -1057,6 +1094,8 @@ def ensure_db_schema():
         db.session.commit()
         res = db.session.execute(text("PRAGMA table_info(ratings)")).fetchall()
         cols = [row[1] for row in res] if res else []
+        if 'is_anonymous' not in cols:
+            db.session.execute(text("ALTER TABLE ratings ADD COLUMN is_anonymous BOOLEAN NOT NULL DEFAULT 0"))
         if 'is_deleted' not in cols:
             db.session.execute(text("ALTER TABLE ratings ADD COLUMN is_deleted BOOLEAN DEFAULT 0"))
             db.session.commit()

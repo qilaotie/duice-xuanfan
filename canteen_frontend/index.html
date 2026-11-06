@@ -42,7 +42,7 @@
         <div class="header-actions">
             <button type="button" class="btn btn-primary btn-sm" id="login-btn">登录 / 注册</button>
             <div class="user-menu" id="user-menu" hidden>
-                <button type="button" class="btn btn-ghost btn-sm" id="nickname-btn" aria-label="设置昵称">
+                <button type="button" class="btn btn-ghost btn-sm" id="nickname-btn" aria-label="编辑个人资料">
                     <span class="user-avatar" id="user-avatar">同</span>
                     <span class="user-name" id="user-name">同学</span>
                 </button>
@@ -354,6 +354,9 @@
             <label id="rating-remove-photo-field" hidden>
                 <input type="checkbox" id="rating-remove-photo"> 移除原有照片
             </label>
+            <label id="rating-anonymous-field" hidden>
+                <input type="checkbox" id="rating-anonymous"> 匿名评价（这条评价不会显示在个人主页）
+            </label>
             <p class="form-error" id="rating-error" hidden></p>
             <button type="submit" class="btn btn-primary btn-block" id="rating-submit">提交评价</button>
         </form>
@@ -398,11 +401,19 @@
     <div class="modal-backdrop" data-close-modal></div>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="nickname-title">
         <button type="button" class="icon-btn modal-close" data-close-modal aria-label="关闭">×</button>
-        <div class="modal-head"><h2 id="nickname-title">设置昵称</h2></div>
+        <div class="modal-head"><h2 id="nickname-title">编辑个人资料</h2><p>填写的资料和非匿名评价会公开展示。</p></div>
         <form id="nickname-form" class="stack">
             <label class="field">
-                <span>昵称（留空时，评价显示为匿名同学）</span>
+                <span>昵称（可选）</span>
                 <input type="text" id="nickname-input" maxlength="24" autocomplete="nickname">
+            </label>
+            <label class="field">
+                <span>口味偏好（可选）</span>
+                <input type="text" id="profile-taste" maxlength="80" placeholder="例如：偏辣、少油">
+            </label>
+            <label class="field">
+                <span>出生地（可选）</span>
+                <input type="text" id="profile-birthplace" maxlength="40" placeholder="例如：陕西西安">
             </label>
             <p class="form-error" id="nickname-error" hidden></p>
             <button type="submit" class="btn btn-primary btn-block">保存</button>
@@ -418,6 +429,14 @@
     </div>
 </div>
 <script src="config.js" defer></script>
-<script src="app.js?v=guest-reviews" defer></script>
+<div class="modal" id="public-profile-modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="public-profile-title">
+        <button type="button" class="icon-btn modal-close" data-close-modal aria-label="关闭">×</button>
+        <div class="modal-head"><h2 id="public-profile-title">个人资料</h2></div>
+        <div id="public-profile-content" class="stack" aria-live="polite"></div>
+    </div>
+</div>
+<script src="app.js?v=public-profiles" defer></script>
 </body>
 </html>
