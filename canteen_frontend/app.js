@@ -1326,6 +1326,7 @@
         setRatingScore(review?.score ?? 5);
         $('#rating-comment').value = review?.content || '';
         $('#rating-photo').value = '';
+        updateRatingPhotoPicker();
         $('#rating-remove-photo').checked = false;
         $('#rating-remove-photo-field').hidden = !review?.photo_url;
         $('#rating-anonymous-field').hidden = !state.token;
@@ -1524,6 +1525,19 @@
             button.classList.toggle('is-active', buttonValue <= value);
             button.setAttribute('aria-checked', String(buttonValue === value));
         });
+    }
+
+    function updateRatingPhotoPicker() {
+        const input = $('#rating-photo');
+        const photo = input.files[0];
+        if (photo && photo.size > 5 * 1024 * 1024) {
+            input.value = '';
+            showError($('#rating-error'), '照片不能超过 5 MB，请重新选择');
+        }
+        const selected = input.files[0];
+        $('#rating-photo-label').textContent = selected ? '更换评价照片' : '添加评价照片';
+        $('#rating-photo-hint').textContent = selected ? selected.name : '可选，最多 5 MB';
+        $('#rating-photo-clear').hidden = !selected;
     }
 
     async function submitRating(event) {
@@ -2175,6 +2189,14 @@
             if (photo) changeProfileAvatar(photo);
         });
         $('#profile-avatar-remove').addEventListener('click', () => changeProfileAvatar(null));
+        $('#rating-photo').addEventListener('change', () => {
+            clearError($('#rating-error'));
+            updateRatingPhotoPicker();
+        });
+        $('#rating-photo-clear').addEventListener('click', () => {
+            $('#rating-photo').value = '';
+            updateRatingPhotoPicker();
+        });
         $('#my-reviews-btn').addEventListener('click', openMyReviews);
         $('#nickname-form').addEventListener('submit', saveNickname);
         $('#detail-content').addEventListener('change', event => {

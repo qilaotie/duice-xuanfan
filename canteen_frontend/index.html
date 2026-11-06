@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=avatar-picker">
+    <link rel="stylesheet" href="styles.css?v=review-photo-picker">
 </head>
 <body>
 <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -347,10 +347,18 @@
                 <span>评论（可选）</span>
                 <textarea id="rating-comment" rows="4" maxlength="500" placeholder="说说菜品、分量、价格，给同学们一点参考…"></textarea>
             </label>
-            <label class="field">
-                <span>评价照片（可选，最多 5 MB）</span>
-                <input type="file" id="rating-photo" accept="image/jpeg,image/png,image/webp">
-            </label>
+            <div>
+                <label class="avatar-picker-control">
+                    <input type="file" id="rating-photo" accept="image/jpeg,image/png,image/webp" aria-describedby="rating-photo-hint">
+                    <span class="avatar-picker-icon" aria-hidden="true">📷</span>
+                    <span class="avatar-picker-copy">
+                        <strong id="rating-photo-label">添加评价照片</strong>
+                        <span id="rating-photo-hint" aria-live="polite">可选，最多 5 MB</span>
+                    </span>
+                    <span class="avatar-picker-icon" aria-hidden="true">＋</span>
+                </label>
+                <button type="button" class="btn btn-ghost btn-sm" id="rating-photo-clear" hidden>清除已选照片</button>
+            </div>
             <label id="rating-remove-photo-field" hidden>
                 <input type="checkbox" id="rating-remove-photo"> 移除原有照片
             </label>
@@ -450,6 +458,6 @@
         <div id="public-profile-content" class="stack" aria-live="polite"></div>
     </div>
 </div>
-<script src="app.js?v=avatar-picker" defer></script>
+<script src="app.js?v=review-photo-picker" defer></script>
 </body>
 </html>
