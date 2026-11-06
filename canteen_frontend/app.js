@@ -1566,6 +1566,13 @@
 
     let ratingPhotos = [];
     let savedRatingPhotoCount = 0;
+    let ratingPhotoPreviewUrls = [];
+
+    function clearRatingPhotoPreviews() {
+        ratingPhotoPreviewUrls.forEach(url => URL.revokeObjectURL(url));
+        ratingPhotoPreviewUrls = [];
+        $('#rating-photo-preview').replaceChildren();
+    }
 
     function ratingPhotoCount() {
         return ratingPhotos.length + ($('#rating-remove-photo').checked ? 0 : savedRatingPhotoCount);
@@ -1577,6 +1584,16 @@
             ? `共 ${count}/4 张，新增 ${ratingPhotos.length} 张`
             : '可选，最多 4 张，每张不超过 5 MB';
         $('#rating-photo-clear').hidden = !ratingPhotos.length;
+        clearRatingPhotoPreviews();
+        ratingPhotoPreviewUrls = ratingPhotos.map(photo => URL.createObjectURL(photo));
+        $('#rating-photo-preview').innerHTML = ratingPhotoPreviewUrls.map((url, index) => `
+            <div class="review-photo-tile">
+                <a href="${url}" target="_blank" rel="noopener" aria-label="查看第 ${index + 1} 张待上传照片">
+                    <img class="review-photo" src="${url}" alt="待上传照片 ${index + 1}">
+                </a>
+                <button type="button" class="review-photo-delete" data-photo-index="${index}" aria-label="移除第 ${index + 1} 张待上传照片">×</button>
+            </div>
+        `).join('');
     }
 
     async function submitRating(event) {
@@ -2149,6 +2166,8 @@
             if (content) content.innerHTML = '';
         }
         if (modal.id === 'rating-modal') {
+            clearRatingPhotoPreviews();
+            ratingPhotos = [];
             state.reopenDetailId = null;
             if (state.returnToMyReviews) {
                 state.returnToMyReviews = false;
@@ -2250,6 +2269,13 @@
         });
         $('#rating-photo-clear').addEventListener('click', () => {
             ratingPhotos = [];
+            clearError($('#rating-error'));
+            updateRatingPhotoPicker();
+        });
+        $('#rating-photo-preview').addEventListener('click', event => {
+            const button = event.target.closest('button[data-photo-index]');
+            if (!button) return;
+            ratingPhotos.splice(Number(button.dataset.photoIndex), 1);
             clearError($('#rating-error'));
             updateRatingPhotoPicker();
         });

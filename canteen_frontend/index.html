@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=review-photo-actions">
+    <link rel="stylesheet" href="styles.css?v=review-photo-preview">
 </head>
 <body>
 <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -357,6 +357,7 @@
                     </span>
                     <span class="avatar-picker-icon" aria-hidden="true">＋</span>
                 </label>
+                <div id="rating-photo-preview" class="review-photo-gallery"></div>
                 <button type="button" class="btn btn-ghost btn-sm" id="rating-photo-clear" hidden>清除已选照片</button>
             </div>
             <label id="rating-remove-photo-field" hidden>
@@ -458,6 +459,6 @@
         <div id="public-profile-content" class="stack" aria-live="polite"></div>
     </div>
 </div>
-<script src="app.js?v=review-photo-actions" defer></script>
+<script src="app.js?v=review-photo-preview" defer></script>
 </body>
 </html>
