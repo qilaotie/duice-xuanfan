@@ -1119,7 +1119,6 @@
                     ${photoImage(data.photo_url, data.name)}
                     <div>
                         <h2 id="detail-title">${escapeHtml(data.name)}</h2>
-                        ${photoControls('canteens', data)}
                     </div>
                 </div>
                 <p class="detail-meta">${formatNumber(comments.length)} 条评价${history.length ? ` · ${formatNumber(history.length)} 个历史快照` : ''}</p>
@@ -1133,13 +1132,14 @@
                 </div>
             </div>
             <div class="detail-body">
-                ${data.dishes?.length ? `<section class="detail-panel">
+                ${state.isAdmin ? renderStallManagement(data) : ''}
+                ${data.dishes?.length && !state.isAdmin ? `<section class="detail-panel">
                     <div class="panel-head"><h3>档口菜品</h3></div>
                     ${data.dishes.map(dish => `<div class="detail-photo-row dish-photo-row">
                         ${photoImage(dish.photo_url, dish.name)}
                         <div><strong>${escapeHtml(dish.name)}</strong>
                             <p class="muted">${dish.rating_count ? `${escapeHtml(dish.score)} / 5 · ${formatNumber(dish.rating_count)} 人评分` : '暂无菜品评分'}</p>
-                            ${photoControls('dishes', dish)}</div>
+                        </div>
                     </div>`).join('')}
                 </section>` : ''}
                 ${history.length ? `<section class="detail-panel">
@@ -1161,6 +1161,59 @@
 
         if (history.length) {
             renderHistoryChart(history);
+        }
+    }
+
+    function renderStallManagement(stall) {
+        const id = Number(stall.id);
+        return `<section class="detail-panel stack">
+            <div class="panel-head"><h3>档口管理</h3></div>
+            <form class="inline-form" data-menu-action="rename-canteen" data-id="${id}">
+                <input name="name" aria-label="档口名称" value="${escapeHtml(stall.name)}" maxlength="100" required>
+                <button type="submit" class="btn btn-primary btn-sm">保存档口名称</button>
+            </form>
+            <div><strong>档口照片</strong>${photoControls('canteens', stall)}</div>
+            <div class="panel-head"><h3>菜品管理</h3></div>
+            <form class="inline-form" data-menu-action="add-dish" data-id="${id}">
+                <input name="name" aria-label="新菜品名称" placeholder="输入新菜品名称" maxlength="80" required>
+                <button type="submit" class="btn btn-primary btn-sm">添加菜品</button>
+            </form>
+            ${(stall.dishes || []).map(dish => `<div class="detail-photo-row dish-photo-row">
+                ${photoImage(dish.photo_url, dish.name)}
+                <div>
+                    <form class="inline-form" data-menu-action="rename-dish" data-id="${Number(dish.id)}">
+                        <input name="name" aria-label="菜品名称" value="${escapeHtml(dish.name)}" maxlength="80" required>
+                        <button type="submit" class="btn btn-soft btn-sm">保存菜名</button>
+                    </form>
+                    <p class="muted">${dish.rating_count ? `${escapeHtml(dish.score)} / 5 · ${formatNumber(dish.rating_count)} 人评分` : '暂无菜品评分'}</p>
+                    ${photoControls('dishes', dish)}
+                </div>
+            </div>`).join('') || '<p class="muted">这个档口还没有菜品。</p>'}
+        </section>`;
+    }
+
+    async function saveMenuChange(event) {
+        const form = event.target.closest('form[data-menu-action]');
+        if (!form) return;
+        event.preventDefault();
+        const detailId = state.detailId;
+        const { menuAction, id } = form.dataset;
+        const add = menuAction === 'add-dish';
+        const path = menuAction === 'rename-dish' ? `/api/admin/dishes/${id}`
+            : `/api/admin/canteens/${id}${add ? '/dishes' : ''}`;
+        const button = form.querySelector('button[type="submit"]');
+        setBusy(button, true);
+        try {
+            await api(path, { method: add ? 'POST' : 'PATCH', body: { name: form.elements.namedItem('name').value.trim() } });
+            toast(add ? '菜品已添加' : '名称已保存');
+            if (state.detailId === detailId) await openDetail(detailId);
+            if (menuAction === 'rename-canteen') {
+                await Promise.all([loadAdminAll(), loadCanteens(), loadRanking()]);
+            }
+        } catch (error) {
+            toast(error.message, 'error');
+        } finally {
+            setBusy(button, false);
         }
     }
 
@@ -1836,13 +1889,19 @@
     function renderAdminCanteens() {
         const list = $('#admin-canteen-list');
         if (!list || !state.admin) return;
+        const select = $('#admin-canteen-filter');
+        const previous = select.value;
+        select.replaceChildren(new Option('总览 · 全部食堂', ''));
+        state.admin.categories.forEach(category => select.add(new Option(category.name, category.id)));
+        if (Array.from(select.options).some(option => option.value === previous)) select.value = previous;
+        const stalls = state.admin.canteens.filter(canteen => !select.value || String(canteen.category_id) === select.value);
 
-        if (!state.admin.canteens.length) {
-            list.innerHTML = adminEmpty('还没有档口，先添加一个吧。');
+        if (!stalls.length) {
+            list.innerHTML = adminEmpty(select.value ? '这个食堂还没有档口。' : '还没有档口，先添加一个吧。');
             return;
         }
 
-        list.innerHTML = state.admin.canteens.map(canteen => `
+        list.innerHTML = stalls.map(canteen => `
             <div class="admin-row">
                 <div class="admin-row-main">
                     <strong>${escapeHtml(canteen.name)}</strong>
@@ -1852,6 +1911,7 @@
                     </p>
                 </div>
                 <div class="admin-row-actions">
+                    <button type="button" class="btn btn-soft btn-sm" data-action="open-detail" data-id="${canteen.id}">管理</button>
                     ${canteen.is_active === false
                         ? `<button type="button" class="btn btn-soft btn-sm" data-action="admin-restore-canteen" data-id="${canteen.id}">恢复上架</button>`
                         : `<button type="button" class="btn btn-ghost btn-sm" data-action="admin-archive-canteen" data-id="${canteen.id}">下架</button>`}
@@ -2226,6 +2286,7 @@
 
         const canteenForm = $('#add-canteen-form');
         if (canteenForm) canteenForm.addEventListener('submit', addCanteen);
+        $('#admin-canteen-filter').addEventListener('change', renderAdminCanteens);
 
         const ratingCategory = $('#rating-category');
         $('#rating-canteen').addEventListener('change', () => loadRatingDishes());
@@ -2282,6 +2343,7 @@
         $('#rating-remove-photo').addEventListener('change', updateRatingPhotoPicker);
         $('#my-reviews-btn').addEventListener('click', openMyReviews);
         $('#nickname-form').addEventListener('submit', saveNickname);
+        $('#detail-content').addEventListener('submit', saveMenuChange);
         $('#detail-content').addEventListener('change', event => {
             const input = event.target;
             if (input.matches('input[data-photo-kind]') && input.files[0]) {

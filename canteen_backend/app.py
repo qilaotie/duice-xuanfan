@@ -1082,6 +1082,37 @@ def admin_add_canteen():
     return jsonify({"msg": "新增档口成功", "id": c.id})
 
 
+@app.route("/api/admin/canteens/<int:item_id>", methods=["PATCH"])
+@app.route("/api/admin/canteens/<int:item_id>/dishes", methods=["POST"])
+@app.route("/api/admin/dishes/<int:item_id>", methods=["PATCH"])
+def admin_update_menu(item_id):
+    user, response, code = require_admin()
+    if response is not None:
+        return response, code
+    add_dish = request.method == "POST"
+    edit_dish = request.path.startswith("/api/admin/dishes/")
+    model = Dish if edit_dish else Canteen
+    item = model.query.get_or_404(item_id)
+    value = (request.get_json() or {}).get("name")
+    name = " ".join(value.split()) if isinstance(value, str) else ""
+    if not name or len(name) > (80 if add_dish or edit_dish else 100):
+        return jsonify({"msg": "名称无效"}), 400
+    if add_dish:
+        item = Dish(canteen_id=item_id, name=name)
+        db.session.add(item)
+    else:
+        item.name = name
+    try:
+        db.session.flush()
+        action = "add_dish" if add_dish else "rename_dish" if edit_dish else "rename_canteen"
+        log_admin_action(user, action, "dish" if add_dish or edit_dish else "canteen", item.id)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"msg": "该档口已有同名菜品"}), 409
+    return jsonify({"msg": "操作成功"})
+
+
 @app.route("/api/admin/canteens/<int:canteen_id>", methods=["DELETE"])
 def admin_delete_canteen(canteen_id):
     user, resp, code = require_admin()

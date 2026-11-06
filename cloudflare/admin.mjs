@@ -15,6 +15,32 @@ export async function admin(ctx) {
         return json({ photo_url: photo ? `/api/photos/${kind}/${id}` : null });
     }
 
+    match = /^\/api\/admin\/(canteens|dishes)\/(\d+)(\/dishes)?$/.exec(path);
+    if (match && ((method === 'PATCH' && !match[3]) ||
+        (method === 'POST' && match[1] === 'canteens' && match[3]))) {
+        const [, table, raw, addDish] = match;
+        const id = Number(raw);
+        const dish = addDish || table === 'dishes';
+        const name = getText((await body(request)).name, dish ? 80 : 100, '名称').replace(/\s+/gu, ' ');
+        if (!name) fail(400, '名称不能为空');
+        if (!await first(`SELECT id FROM ${table} WHERE id=?`, id)) fail(404, '记录不存在');
+        if (addDish) {
+            const row = await first(`INSERT INTO dishes (canteen_id,name) VALUES (?,?)
+                ON CONFLICT(canteen_id,name) DO NOTHING RETURNING id`, id, name);
+            if (!row) fail(409, '该档口已有同名菜品');
+            await action('add_dish', 'dish', row.id).run();
+        } else {
+            try {
+                await batch([q(`UPDATE ${table} SET name=? WHERE id=?`, name, id),
+                    action(dish ? 'rename_dish' : 'rename_canteen', dish ? 'dish' : 'canteen', id)]);
+            } catch (error) {
+                if (dish && String(error).includes('dishes.canteen_id, dishes.name')) fail(409, '该档口已有同名菜品');
+                throw error;
+            }
+        }
+        return success();
+    }
+
     if (method === 'GET') {
         if (path === '/api/admin/categories') return json(await all('SELECT * FROM categories ORDER BY id'));
         if (path === '/api/admin/canteens') {
