@@ -413,6 +413,8 @@
 
     function showProfileAvatar(url) {
         $('#profile-avatar-preview').innerHTML = avatarContent(url, state.nickname || '同学');
+        $('#profile-avatar-label').textContent = url ? '更换头像' : '选择头像';
+        $('#profile-avatar-status').textContent = '';
         $('#profile-avatar-remove').hidden = !url;
     }
 
@@ -422,6 +424,8 @@
         const errorElement = $('#nickname-error');
         input.disabled = remove.disabled = true;
         clearError(errorElement);
+        const status = $('#profile-avatar-status');
+        status.textContent = photo ? '正在处理并上传头像…' : '正在移除头像…';
         try {
             let body;
             if (photo) {
@@ -430,8 +434,10 @@
             }
             const data = await api('/api/profile/avatar', { method: photo ? 'PUT' : 'DELETE', body });
             showProfileAvatar(data.avatar_url);
+            status.textContent = photo ? '头像已更新' : '头像已移除';
             toast(photo ? '头像已更新' : '头像已移除');
         } catch (error) {
+            status.textContent = '';
             showError(errorElement, error.message);
         } finally {
             input.value = '';

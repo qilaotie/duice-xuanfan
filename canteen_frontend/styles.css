@@ -1904,6 +1904,62 @@ button.comment-avatar { cursor: pointer; }
     object-fit: cover;
 }
 
+.avatar-picker-control {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    border: 1px dashed var(--primary);
+    border-radius: 14px;
+    background: var(--primary-soft);
+    color: var(--primary);
+    cursor: pointer;
+}
+
+.avatar-picker-control:focus-within {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+.avatar-picker-control input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+}
+
+.avatar-picker-control .comment-avatar {
+    width: 48px;
+    height: 48px;
+    background: var(--surface);
+}
+
+.avatar-picker-copy {
+    display: grid;
+    gap: 2px;
+    overflow-wrap: anywhere;
+}
+
+.avatar-picker-copy span,
+.avatar-picker-status {
+    font-size: 12px;
+}
+
+.avatar-picker-icon {
+    font-size: 22px;
+}
+
+.avatar-picker-status {
+    display: block;
+    margin-top: 4px;
+}
+
+.avatar-picker-status:empty {
+    display: none;
+}
+
 .comment-main {
     flex: 1;
     min-width: 0;
