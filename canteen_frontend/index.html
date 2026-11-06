@@ -47,9 +47,9 @@
                     <span class="user-name" id="user-name">同学</span>
                 </button>
                 <span class="badge badge-amber" id="admin-badge" hidden>管理员</span>
-                <button type="button" class="btn btn-ghost btn-sm" id="my-reviews-btn">我的</button>
                 <button type="button" class="btn btn-ghost btn-sm" id="logout-btn">退出</button>
             </div>
+            <button type="button" class="btn btn-ghost btn-sm" id="my-reviews-btn" hidden>我的</button>
         </div>
     </div>
 </header>
@@ -306,7 +306,7 @@
         <div class="modal-head">
             <span class="modal-icon">★</span>
             <h2 id="rating-title">写一条评价</h2>
-            <p>每人对同一档口只能评价一次，请认真打分。</p>
+            <p>无需登录也可以评价。访客可在当前浏览器查看和管理自己的评价。</p>
         </div>
         <form id="rating-form" class="stack">
             <div class="field-row">
@@ -418,6 +418,6 @@
     </div>
 </div>
 <script src="config.js" defer></script>
-<script src="app.js?v=cloud-fallback-2s" defer></script>
+<script src="app.js?v=guest-reviews" defer></script>
 </body>
 </html>

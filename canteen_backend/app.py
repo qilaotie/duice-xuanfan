@@ -234,6 +234,14 @@ def require_admin():
 
 # ========= 普通用户接口 =========
 
+@app.route("/api/guest", methods=["POST"])
+def create_guest():
+    token = uuid.uuid4().hex
+    db.session.add(User(username="__guest_" + uuid.uuid4().hex, password="!", is_admin=False, token=token))
+    db.session.commit()
+    return jsonify({"token": token}), 201
+
+
 @app.route("/api/login", methods=["POST"])
 @app.route("/api/register", methods=["POST"])
 def login():
@@ -251,8 +259,8 @@ def login():
         confirmation = data.get("confirm_password")
         if not isinstance(confirmation, str) or confirmation.strip() != password:
             return jsonify({"msg": "两次输入的密码不一致"}), 400
-        if user or username.casefold() == "admin":
-            return jsonify({"msg": "该账号已注册，请登录"}), 409
+        if user or username.casefold() == "admin" or username.casefold().startswith("__guest_"):
+            return jsonify({"msg": "该账号不可注册"}), 409
         try:
             nickname = validate_nickname(data.get("nickname", ""))
         except ValueError as exc:

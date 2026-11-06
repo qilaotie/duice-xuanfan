@@ -81,6 +81,12 @@ async function route(request, env) {
         await first('SELECT 1 FROM categories LIMIT 1');
         return json({ ok: true });
     }
+    if (method === 'POST' && path === '/api/guest') {
+        const token = randomBytes(16).toString('hex');
+        await q('INSERT INTO users (username,password,is_admin,token) VALUES (?,?,0,?)',
+            '__guest_' + randomBytes(16).toString('hex'), '!', token).run();
+        return json({ token }, 201);
+    }
     if (method === 'POST' && ['/api/register', '/api/login'].includes(path)) {
         const data = await body(request);
         const username = getText(data.username, 50, '账号');
@@ -89,7 +95,7 @@ async function route(request, env) {
         let user = await first('SELECT * FROM users WHERE username=?', username);
         if (path === '/api/register') {
             if (typeof data.confirm_password !== 'string' || data.confirm_password.trim() !== password) fail(400, '两次输入的密码不一致');
-            if (user || username.toLowerCase() === 'admin') fail(409, '该账号已注册，请登录');
+            if (user || username.toLowerCase() === 'admin' || username.toLowerCase().startsWith('__guest_')) fail(409, '该账号不可注册');
             const name = nickname(data.nickname ?? '');
             user = await first(`INSERT INTO users (username,password,is_admin,token,nickname)
                 VALUES (?,?,0,?,?) ON CONFLICT(username) DO NOTHING RETURNING *`,

@@ -19,7 +19,6 @@
         expandedCategories: new Set(),
         detailId: null,
         reopenDetailId: null,
-        pendingRating: null,
         ratingScore: 5,
         admin: null,
         adminTab: 'categories',
@@ -237,7 +236,8 @@
 
         const multipart = body instanceof FormData;
         if (body !== undefined && !multipart) headers['Content-Type'] = 'application/json';
-        if (useAuth && state.token) headers.Authorization = state.token;
+        const authorization = state.token || localStorage.getItem('guestToken');
+        if (useAuth && authorization) headers.Authorization = authorization;
 
         let response;
         try {
@@ -281,6 +281,7 @@
 
     function updateAuthUI() {
         const loggedIn = Boolean(state.token);
+        $('#my-reviews-btn').hidden = !loggedIn && !localStorage.getItem('guestToken');
 
         const loginButton = $('#login-btn');
         const userMenu = $('#user-menu');
@@ -381,11 +382,9 @@
             localStorage.setItem('username', username);
             localStorage.setItem('nickname', state.nickname);
 
-            const pending = state.pendingRating;
             closeModal($('#auth-modal'));
             updateAuthUI();
             toast('登录成功，欢迎回来');
-            if (pending !== null && pending !== undefined) openRating(pending || null);
         } catch (error) {
             showError(errorElement, error.message);
         } finally {
@@ -1215,12 +1214,6 @@
     function openRating(canteenId = null, review = null, reviewDetail = state.detailData) {
         const id = canteenId ? Number(canteenId) : null;
 
-        if (!state.token) {
-            state.pendingRating = id === null ? 0 : id;
-            openAuth();
-            return;
-        }
-
         const detail = review ? reviewDetail : null;
         if (id && $('#detail-modal').classList.contains('is-open')) {
             state.reopenDetailId = id;
@@ -1495,6 +1488,11 @@
                 body.append('photo', await preparePhoto(photo));
             }
             const path = reviewId ? `/api/ratings/${reviewId}` : '/api/ratings';
+            if (!state.token && !localStorage.getItem('guestToken')) {
+                const guest = await api('/api/guest', { method: 'POST', auth: false });
+                localStorage.setItem('guestToken', 'Bearer ' + guest.token);
+                updateAuthUI();
+            }
             await api(path, { method: reviewId ? 'PATCH' : 'POST', body });
 
             const reopenId = state.reopenDetailId;
@@ -2006,9 +2004,6 @@
             destroyChart();
             const content = $('#detail-content');
             if (content) content.innerHTML = '';
-        }
-        if (modal.id === 'auth-modal') {
-            state.pendingRating = null;
         }
         if (modal.id === 'rating-modal') {
             state.reopenDetailId = null;
