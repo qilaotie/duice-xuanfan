@@ -4,7 +4,7 @@ import argparse
 import sqlite3
 from pathlib import Path
 
-TABLES = ("categories", "canteens", "dishes", "users", "ratings", "review_photos", "reports", "admin_actions", "rating_history")
+TABLES = ("categories", "canteens", "dishes", "users", "ratings", "review_photos", "reports", "admin_actions", "rating_history", "feedback")
 
 
 def main():

@@ -350,6 +350,19 @@ async function route(request, env) {
         return json({ msg: '举报成功' });
     }
 
+    if (method === 'POST' && path === '/api/feedback') {
+        const fields = request.headers.get('content-type')?.startsWith('multipart/form-data') ? await form(request) : null;
+        const data = fields ? Object.fromEntries(fields) : await body(request);
+        const kind = data.kind;
+        if (!['issue', 'stall'].includes(kind)) fail(400, '反馈类型无效');
+        const name = kind === 'stall' ? getText(data.name, 100, '档口名称') : null;
+        const content = getText(data.content ?? '', 1000, '反馈内容');
+        const photo = kind === 'stall' ? await photoBytes(fields?.get('photo')) : null;
+        if (kind === 'issue' ? !content : !name || !photo) fail(400, kind === 'issue' ? '请输入反馈内容' : '请填写档口名称并添加照片');
+        await q('INSERT INTO feedback (kind,name,content,photo,created_at) VALUES (?,?,?,?,?)', kind, name, content, photo, now()).run();
+        return json({ msg: '反馈已提交' }, 201);
+    }
+
     if (path.startsWith('/api/admin/')) {
         if (!viewer?.is_admin) fail(403, '无权限访问');
         return admin({ path, method, request, viewer, q, all, first, batch, json, fail, body, form, photoBytes, now, history, getText });

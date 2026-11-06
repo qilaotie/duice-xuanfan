@@ -1843,6 +1843,9 @@
     function renderAdminTab(tab) {
         if (!state.admin) return;
         switch (tab) {
+            case 'feedback':
+                loadFeedback();
+                break;
             case 'categories':
                 renderAdminCategories();
                 break;
@@ -1860,6 +1863,107 @@
                 break;
             default:
                 break;
+        }
+    }
+
+    function openFeedback(kind) {
+        const form = $('#feedback-form');
+        const stall = kind === 'stall';
+        form.reset();
+        form.dataset.kind = kind;
+        $('#feedback-title').textContent = stall ? '推荐档口' : '问题反馈';
+        $('#feedback-name-field').hidden = $('#feedback-photo-field').hidden = !stall;
+        form.elements.namedItem('name').required = form.elements.photo.required = stall;
+        form.elements.content.required = !stall;
+        $('#feedback-content-label').textContent = stall ? '补充说明（可选，可写食堂和位置）' : '请描述遇到的问题';
+        $('#feedback-photo-label').textContent = '最多 5 MB';
+        clearError($('#feedback-error'));
+        openModal($('#feedback-modal'));
+    }
+
+    async function submitFeedback(event) {
+        event.preventDefault();
+        const form = event.target;
+        const button = form.querySelector('button[type="submit"]');
+        const error = $('#feedback-error');
+        clearError(error);
+        setBusy(button, true);
+        try {
+            let body = { kind: form.dataset.kind, content: form.elements.content.value.trim() };
+            if (body.kind === 'stall') {
+                body = new FormData();
+                body.append('kind', 'stall');
+                body.append('content', form.elements.content.value.trim());
+                body.append('name', form.elements.namedItem('name').value.trim());
+                body.append('photo', await preparePhoto(form.elements.photo.files[0]));
+            }
+            await api('/api/feedback', { method: 'POST', body, auth: false });
+            closeModal($('#feedback-modal'));
+            toast('反馈已提交，感谢！');
+        } catch (errorMessage) {
+            showError(error, errorMessage.message);
+        } finally {
+            setBusy(button, false);
+        }
+    }
+
+    async function loadFeedback() {
+        const list = $('#admin-feedback-list');
+        const status = $('#feedback-status').value;
+        list.textContent = '正在加载…';
+        try {
+            const rows = await api(`/api/admin/feedback?status=${status}`);
+            if ($('#feedback-status').value !== status) return;
+            const options = state.admin.categories.map(category =>
+                `<option value="${Number(category.id)}">${escapeHtml(category.name)}</option>`).join('');
+            list.innerHTML = rows.length ? rows.map(row => `
+                <article class="detail-panel stack" data-feedback-id="${Number(row.id)}">
+                    <strong>${row.kind === 'stall' ? '档口推荐 · ' + escapeHtml(row.name) : '问题反馈'}</strong>
+                    <p class="muted">${escapeHtml(row.created_at)} · ${{pending:'待处理',approved:'已入库',closed:'已处理'}[row.status]}</p>
+                    <p class="comment-text">${escapeHtml(row.content || '（无补充说明）')}</p>
+                    ${row.has_photo ? `<div><button type="button" class="btn btn-soft btn-sm" data-action="feedback-photo" data-id="${Number(row.id)}">查看提交照片</button></div>` : ''}
+                    ${row.status === 'pending' && row.kind === 'stall' ? `<form class="inline-form" data-feedback-approve>
+                        <input name="name" aria-label="正式档口名称" value="${escapeHtml(row.name)}" maxlength="100" required>
+                        <select name="category" aria-label="所属食堂" required><option value="">请选择所属食堂</option>${options}</select>
+                        <button type="submit" class="btn btn-primary">审核并入库</button>
+                    </form>` : ''}
+                    ${row.status === 'pending' ? `<div><button type="button" class="btn btn-ghost btn-sm" data-action="feedback-close" data-id="${Number(row.id)}">${row.kind === 'stall' ? '关闭建议' : '标为已处理'}</button></div>` : ''}
+                </article>`).join('') : adminEmpty('暂无反馈。');
+        } catch (error) {
+            if ($('#feedback-status').value === status) list.textContent = error.message;
+        }
+    }
+
+    async function processFeedback(id, button, body) {
+        setBusy(button, true);
+        try {
+            await api(`/api/admin/feedback/${id}`, { method: 'POST', body });
+            toast(body.action === 'approve' ? '档口已入库' : '反馈已处理');
+            await loadFeedback();
+            if (body.action === 'approve') await Promise.all([loadCanteens(), loadAdminAll()]);
+        } catch (error) {
+            toast(error.message, 'error');
+        } finally {
+            setBusy(button, false);
+        }
+    }
+
+    async function showFeedbackPhoto(id, button) {
+        button.disabled = true;
+        try {
+            const response = await fetch((window.CANTEEN_API_ORIGIN || '') + `/api/admin/feedback/${id}/photo`,
+                { headers: { Authorization: state.token } });
+            if (!response.ok) throw new Error('照片加载失败');
+            const url = URL.createObjectURL(await response.blob());
+            const img = new Image();
+            img.className = 'review-photo';
+            img.alt = '用户提交的档口照片';
+            img.onload = img.onerror = () => URL.revokeObjectURL(url);
+            img.src = url;
+            button.replaceWith(img);
+        } catch (error) {
+            toast(error.message, 'error');
+            button.disabled = false;
         }
     }
 
@@ -2252,6 +2356,19 @@
     /* ---------------- 事件 ---------------- */
 
     function bindEvents() {
+        $('#feedback-form').addEventListener('submit', submitFeedback);
+        $('#feedback-form').elements.photo.addEventListener('change', event => {
+            $('#feedback-photo-label').textContent = event.target.files[0]?.name || '最多 5 MB';
+        });
+        $('#feedback-status').addEventListener('change', loadFeedback);
+        $('#admin-feedback-list').addEventListener('submit', event => {
+            const form = event.target.closest('[data-feedback-approve]');
+            if (!form) return;
+            event.preventDefault();
+            processFeedback(form.closest('[data-feedback-id]').dataset.feedbackId, event.submitter, {
+                action: 'approve', name: form.elements.namedItem('name').value.trim(), category_id: Number(form.elements.category.value)
+            });
+        });
         const loginButton = $('#login-btn');
         const logoutButton = $('#logout-btn');
         if (loginButton) loginButton.addEventListener('click', openAuth);
@@ -2409,6 +2526,18 @@
         const id = rawId && /^\d+$/.test(rawId) ? Number(rawId) : null;
 
         switch (action) {
+            case 'feedback-issue':
+                openFeedback('issue');
+                break;
+            case 'feedback-stall':
+                openFeedback('stall');
+                break;
+            case 'feedback-photo':
+                if (id) showFeedbackPhoto(id, element);
+                break;
+            case 'feedback-close':
+                if (id) processFeedback(id, element, { action: 'close' });
+                break;
             case 'delete-review-photo':
                 if (id) deleteReviewPhoto(id, element);
                 break;

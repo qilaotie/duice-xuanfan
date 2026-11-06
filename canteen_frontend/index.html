@@ -65,6 +65,8 @@
                 <div class="hero-actions">
                     <button type="button" class="btn btn-light" data-action="open-rating">写一条评价</button>
                     <button type="button" class="btn btn-ghost-light" data-action="scroll-grid">浏览档口 <span aria-hidden="true">→</span></button>
+                    <button type="button" class="btn btn-ghost-light btn-sm" data-action="feedback-issue">问题反馈</button>
+                    <button type="button" class="btn btn-ghost-light btn-sm" data-action="feedback-stall">推荐档口</button>
                 </div>
             </div>
             <div class="hero-stats" id="hero-stats">
@@ -173,6 +175,7 @@
                 <button type="button" class="admin-tab" data-admin-tab="canteens" role="tab">档口</button>
                 <button type="button" class="admin-tab" data-admin-tab="ratings" role="tab">评价</button>
                 <button type="button" class="admin-tab" data-admin-tab="reports" role="tab">举报</button>
+                <button type="button" class="admin-tab" data-admin-tab="feedback" role="tab">用户反馈</button>
                 <button type="button" class="admin-tab" data-admin-tab="actions" role="tab">操作日志</button>
                 <button type="button" class="admin-tab" data-admin-tab="maintenance" role="tab">数据维护</button>
             </div>
@@ -240,6 +243,13 @@
                     <div class="admin-list" id="admin-report-list"></div>
                 </section>
 
+                <section class="admin-section" data-admin-section="feedback">
+                    <div class="admin-section-head"><h2>用户反馈与档口推荐</h2></div>
+                    <label class="field"><span>审核状态</span>
+                        <select id="feedback-status"><option value="pending">待处理</option><option value="processed">已处理</option></select>
+                    </label>
+                    <div class="admin-list" id="admin-feedback-list"></div>
+                </section>
                 <section class="admin-section" data-admin-section="actions">
                     <div class="admin-section-head">
                         <div>
@@ -465,6 +475,25 @@
         <div id="public-profile-content" class="stack" aria-live="polite"></div>
     </div>
 </div>
-<script src="app.js?v=admin-menu" defer></script>
+<div class="modal" id="feedback-modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="feedback-title">
+        <button type="button" class="icon-btn modal-close" data-close-modal aria-label="关闭">×</button>
+        <div class="modal-head"><h2 id="feedback-title">问题反馈</h2></div>
+        <form id="feedback-form" class="stack">
+            <label class="field" id="feedback-name-field" hidden><span>档口名称</span><input name="name" maxlength="100"></label>
+            <label class="field"><span id="feedback-content-label">请描述遇到的问题</span><textarea name="content" rows="4" maxlength="1000"></textarea></label>
+            <label class="avatar-picker-control" id="feedback-photo-field" hidden>
+                <input type="file" name="photo" accept="image/jpeg,image/png,image/webp">
+                <span class="avatar-picker-icon" aria-hidden="true">📷</span>
+                <span class="avatar-picker-copy"><strong>选择档口照片</strong><span id="feedback-photo-label">最多 5 MB</span></span>
+                <span class="avatar-picker-icon" aria-hidden="true">＋</span>
+            </label>
+            <p class="form-error" id="feedback-error" hidden></p>
+            <button type="submit" class="btn btn-primary btn-block">提交</button>
+        </form>
+    </div>
+</div>
+<script src="app.js?v=user-feedback" defer></script>
 </body>
 </html>

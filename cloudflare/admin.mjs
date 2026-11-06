@@ -4,6 +4,42 @@ export async function admin(ctx) {
         (admin_user_id,action,target_type,target_id,details,created_at) VALUES (?,?,?,?,?,?)`,
         viewer.id, name, type, id, name + ' by ' + viewer.username, now());
     const success = () => json({ msg: '操作成功' });
+    if (method === 'GET' && path === '/api/admin/feedback') {
+        const status = new URL(request.url).searchParams.get('status') === 'processed' ? '!=' : '=';
+        return json(await all(`SELECT id,kind,name,content,status,canteen_id,created_at,photo IS NOT NULL has_photo
+            FROM feedback WHERE status ${status} 'pending' ORDER BY id DESC LIMIT 100`));
+    }
+    const feedback = /^\/api\/admin\/feedback\/(\d+)(\/photo)?$/.exec(path);
+    if (feedback && method === 'GET' && feedback[2]) {
+        const row = await first('SELECT photo FROM feedback WHERE id=?', Number(feedback[1]));
+        if (!row?.photo) fail(404, '照片不存在');
+        return new Response(new Uint8Array(row.photo), { headers: { 'Content-Type': 'image/jpeg', 'X-Content-Type-Options': 'nosniff' } });
+    }
+    if (feedback && method === 'POST' && !feedback[2]) {
+        const id = Number(feedback[1]);
+        const data = await body(request);
+        if (data.action === 'close') {
+            const result = await q("UPDATE feedback SET status='closed' WHERE id=? AND status='pending'", id).run();
+            if (!result.meta.changes) fail(409, '此反馈已处理或不存在');
+            return success();
+        }
+        if (data.action !== 'approve') fail(400, '审核操作无效');
+        const name = getText(data.name, 100, '档口名称').replace(/\s+/gu, ' ');
+        const category = Number(data.category_id);
+        if (!name || !Number.isSafeInteger(category) || category < 1) fail(400, '请填写正式名称并选择食堂');
+        const rows = await batch([
+            q(`INSERT INTO canteens (name,category_id,is_active,photo)
+                SELECT ?,?,1,photo FROM feedback WHERE id=? AND kind='stall' AND status='pending'
+                AND EXISTS (SELECT 1 FROM categories WHERE id=?)
+                AND NOT EXISTS (SELECT 1 FROM canteens WHERE category_id=? AND name=?)
+                RETURNING id`, name, category, id, category, category, name),
+            q(`UPDATE feedback SET status='approved',canteen_id=last_insert_rowid()
+                WHERE id=? AND changes()=1 AND status='pending'`, id),
+        ]);
+        const created = rows[0].results[0];
+        if (!created) fail(409, '无法入库，请确认食堂有效、没有同名档口且建议仍待处理');
+        return json({ msg: '档口已入库', id: created.id });
+    }
     let match = /^\/api\/admin\/photos\/(canteens|dishes)\/(\d+)$/.exec(path);
     if (match && ['PUT', 'DELETE'].includes(method)) {
         const [, kind, raw] = match;

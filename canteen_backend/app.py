@@ -154,6 +154,20 @@ class ReviewPhoto(db.Model):
     photo = deferred(db.Column(db.LargeBinary, nullable=False))
 
 
+class Feedback(db.Model):
+    __tablename__ = "feedback"
+    __table_args__ = {"sqlite_autoincrement": True}
+    id = db.Column(db.Integer, primary_key=True)
+    kind = db.Column(db.Text, nullable=False)
+    name = db.Column(db.Text)
+    content = db.Column(db.Text, nullable=False)
+    photo = deferred(db.Column(db.LargeBinary))
+    has_photo = column_property(photo.expression.is_not(None))
+    status = db.Column(db.Text, nullable=False, default="pending")
+    canteen_id = db.Column(db.Integer, db.ForeignKey("canteens.id", ondelete="SET NULL"))
+    created_at = db.Column(db.Text, nullable=False, default=lambda: datetime.utcnow().isoformat(sep=" ", timespec="milliseconds"))
+
+
 class Report(db.Model):
     __tablename__ = "reports"
     id = db.Column(db.Integer, primary_key=True)
@@ -614,6 +628,89 @@ def delete_review_photo(rating_id, photo_id):
         abort(404)
     db.session.commit()
     return jsonify({"msg": "照片已删除"})
+
+
+@app.route("/api/feedback", methods=["POST"])
+def submit_feedback():
+    data = request.form if request.mimetype == "multipart/form-data" else request.get_json(silent=True)
+    if not hasattr(data, "get") or data.get("kind") not in ("issue", "stall"):
+        return jsonify({"msg": "反馈类型无效"}), 400
+    kind = data.get("kind")
+    content = data.get("content", "")
+    name = data.get("name", "") if kind == "stall" else ""
+    if not isinstance(content, str) or not isinstance(name, str):
+        return jsonify({"msg": "反馈格式无效"}), 400
+    content, name = content.strip(), name.strip()
+    if len(content) > 1000 or len(name) > 100 or (kind == "issue" and not content):
+        return jsonify({"msg": "反馈内容无效"}), 400
+    try:
+        photo = read_photo(request.files.get("photo")) if kind == "stall" else None
+    except ValueError as exc:
+        return jsonify({"msg": str(exc)}), 400
+    if kind == "stall" and (not name or not photo):
+        return jsonify({"msg": "请填写档口名称并添加照片"}), 400
+    db.session.add(Feedback(kind=kind, name=name or None, content=content, photo=photo))
+    db.session.commit()
+    return jsonify({"msg": "反馈已提交"}), 201
+
+
+@app.route("/api/admin/feedback", methods=["GET"])
+def list_feedback():
+    _, response, code = require_admin()
+    if response is not None:
+        return response, code
+    pending = request.args.get("status") != "processed"
+    condition = Feedback.status == "pending" if pending else Feedback.status != "pending"
+    rows = Feedback.query.filter(condition).order_by(Feedback.id.desc()).limit(100)
+    return jsonify([{key: getattr(row, key) for key in (
+        "id", "kind", "name", "content", "status", "canteen_id", "created_at", "has_photo"
+    )} for row in rows])
+
+
+@app.route("/api/admin/feedback/<int:item_id>/photo")
+def feedback_photo(item_id):
+    _, response, code = require_admin()
+    if response is not None:
+        return response, code
+    row = Feedback.query.get_or_404(item_id)
+    if not row.has_photo:
+        abort(404)
+    return send_file(BytesIO(row.photo), mimetype="image/jpeg", max_age=0)
+
+
+@app.route("/api/admin/feedback/<int:item_id>", methods=["POST"])
+def process_feedback(item_id):
+    _, response, code = require_admin()
+    if response is not None:
+        return response, code
+    data = request.get_json(silent=True)
+    action = data.get("action") if isinstance(data, dict) else None
+    if action not in ("approve", "close"):
+        return jsonify({"msg": "审核操作无效"}), 400
+    query = Feedback.query.filter_by(id=item_id, status="pending")
+    if action == "approve":
+        query = query.filter_by(kind="stall")
+    if not query.update({"status": "closed" if action == "close" else "approved"}, synchronize_session=False):
+        return jsonify({"msg": "此反馈已处理或不存在"}), 409
+    if action == "close":
+        db.session.commit()
+        return jsonify({"msg": "反馈已处理"})
+    value = data.get("name")
+    name = " ".join(value.split()) if isinstance(value, str) else ""
+    category = data.get("category_id")
+    if not name or len(name) > 100 or type(category) is not int or not db.session.get(Category, category):
+        db.session.rollback()
+        return jsonify({"msg": "请填写正式名称并选择食堂"}), 400
+    if Canteen.query.filter_by(name=name, category_id=category).first():
+        db.session.rollback()
+        return jsonify({"msg": "该食堂已有同名档口"}), 409
+    row = db.session.get(Feedback, item_id)
+    stall = Canteen(name=name, category_id=category, is_active=True, photo=row.photo)
+    db.session.add(stall)
+    db.session.flush()
+    row.canteen_id = stall.id
+    db.session.commit()
+    return jsonify({"msg": "档口已入库", "id": stall.id})
 
 
 # 提交评分
@@ -1134,6 +1231,7 @@ def admin_delete_canteen(canteen_id):
 
     log_admin_action(user, 'delete_canteen', 'canteen', canteen_id,
                      f'Deleted canteen "{c.name}" with {len(rating_ids)} rating(s) by admin={user.username}')
+    Feedback.query.filter_by(canteen_id=c.id).update({"canteen_id": None}, synchronize_session=False)
     db.session.delete(c)
     db.session.commit()
     return jsonify({"msg": "删除档口成功"})
