@@ -75,11 +75,12 @@
         setInitialLoading();
         if (await useBackupIfNeeded()) return;
         await Promise.allSettled([loadCategories(), loadCanteens(), loadRanking()]);
-        await applyRoute();
         window.addEventListener('popstate', applyRoute);
         window.addEventListener('hashchange', () => {
             if (window.location.hash !== activeRouteHash) applyRoute();
         });
+        history.scrollRestoration = 'manual';
+        await applyRoute();
         window.addEventListener('scroll', () => {
             if (scrollFrame) return;
             scrollFrame = requestAnimationFrame(() => {
@@ -154,6 +155,7 @@
 
     async function applyRoute() {
         const version = ++routeVersion;
+        const requestedHash = window.location.hash;
         applyingRoute = true;
         activeRouteHash = window.location.hash;
         const url = new URL(window.location.hash.slice(1).replace(/^campus$/, '/campus').replace(/^forum$/, '/forum') || '/canteens', window.location.origin);
@@ -194,6 +196,7 @@
         if (detail) await openDetail(Number(detail[1]));
         if (thread) await openForumThread(Number(thread[1]));
         if (version !== routeVersion) return;
+        if (window.location.hash !== requestedHash) return applyRoute();
         const canonical = detail ? '#/stalls/' + detail[1] : thread ? '#/forum/posts/' + thread[1] : listHash();
         history.replaceState(history.state, '', canonical);
         activeRouteHash = canonical;

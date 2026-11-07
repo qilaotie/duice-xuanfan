@@ -58,4 +58,4 @@ jobs:
         if: always()
         with:
           name: frontend-test-results
-          path: test-results/frontend-coverage.json
+          path: test-results/

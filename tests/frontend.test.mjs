@@ -23,12 +23,23 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
     async function scenario(name, actions) {
         await t.test(name, async () => {
             const page = await browser.newPage();
+            const errors = [];
+            page.on('pageerror', error => errors.push(String(error)));
+            page.on('response', response => {
+                if (response.status() >= 400 && response.url().includes('/api/')) errors.push(response.status() + ' ' + response.url());
+            });
             try {
                 await page.route('https://cdn.jsdelivr.net/**', route => route.abort());
                 await page.coverage.startJSCoverage({ resetOnNavigation: false });
                 await page.goto('http://127.0.0.1:' + port);
                 await waitFor(page, '#canteen-grid [data-action="open-detail"]');
                 await actions(page);
+            } catch (error) {
+                await mkdir('test-results', { recursive: true });
+                const file = name.split(' ')[0];
+                await page.screenshot({ path: 'test-results/' + file + '.png', fullPage: true });
+                await writeFile('test-results/' + file + '.txt', JSON.stringify({ url: page.url(), errors, text: await page.locator('body').innerText() }, null, 2));
+                throw error;
             } finally {
                 for (const entry of await page.coverage.stopJSCoverage()) {
                     const file = basename(new URL(entry.url).pathname);
