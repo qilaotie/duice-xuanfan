@@ -73,12 +73,135 @@
 
         bindEvents();
         setInitialLoading();
-        if (window.location.hash === '#campus') showView('campus');
-        if (window.location.hash === '#forum') showView('forum');
         if (await useBackupIfNeeded()) return;
-        loadCategories().catch(() => {});
-        loadCanteens().catch(() => {});
-        loadRanking().catch(() => {});
+        await Promise.allSettled([loadCategories(), loadCanteens(), loadRanking()]);
+        await applyRoute();
+        window.addEventListener('popstate', applyRoute);
+        window.addEventListener('hashchange', () => {
+            if (window.location.hash !== activeRouteHash) applyRoute();
+        });
+        window.addEventListener('scroll', () => {
+            if (scrollFrame) return;
+            scrollFrame = requestAnimationFrame(() => {
+                scrollFrame = 0;
+                saveRouteState();
+            });
+        }, { passive: true });
+        document.addEventListener('input', () => queueMicrotask(saveRouteState));
+        document.addEventListener('change', () => queueMicrotask(saveRouteState));
+        document.addEventListener('click', () => queueMicrotask(saveRouteState));
+    }
+
+    let activeRouteHash = '';
+    let applyingRoute = false;
+    let routeVersion = 0;
+    let scrollFrame = 0;
+
+    const viewPaths = { stalls: '/canteens', campus: '/campus', forum: '/forum', ranking: '/ranking', admin: '/admin' };
+
+    function listHash() {
+        const query = new URLSearchParams();
+        if (state.view === 'stalls') {
+            if (state.categoryFilter !== null) query.set('location', state.categoryFilter);
+            if (state.search) query.set('q', state.search);
+            if (state.ratedOnly) query.set('rated', '1');
+            if (state.sort !== 'number') query.set('sort', state.sort);
+        } else if (state.view === 'campus') {
+            if (campusLocationFilter) query.set('location', campusLocationFilter);
+            if ($('#campus-food-search').value) query.set('q', $('#campus-food-search').value);
+        } else if (state.view === 'forum' && $('#forum-kind-filter').value) {
+            query.set('kind', $('#forum-kind-filter').value);
+        }
+        return '#' + (viewPaths[state.view] || '/canteens') + (query.size ? '?' + query : '');
+    }
+
+    function routeSnapshot() {
+        return {
+            scroll: window.scrollY, expanded: Array.from(state.expandedCategories),
+            forumRows: forumCachedRows, forumMore: !$('#forum-more').hidden
+        };
+    }
+
+    function saveRouteState() {
+        if (applyingRoute || !activeRouteHash || state.detailId || threadId ||
+            /^#\/(stalls\/\d+|forum\/posts\/\d+)/.test(window.location.hash)) return;
+        const hash = listHash();
+        history.replaceState({ ...history.state, ui: routeSnapshot() }, '', hash);
+        activeRouteHash = hash;
+    }
+
+    function openContentRoute(hash) {
+        if (applyingRoute || window.location.hash === hash) return;
+        saveRouteState();
+        const parent = /^#\/(stalls\/\d+|forum\/posts\/\d+)/.test(window.location.hash)
+            ? history.state?.parent : { hash: window.location.hash, ui: routeSnapshot() };
+        history.pushState({ parent, routed: true }, '', hash);
+        activeRouteHash = hash;
+    }
+
+    function dismissModal(modal) {
+        const routed = modal?.id === 'detail-modal' && /^#\/stalls\/\d+$/.test(window.location.hash) ||
+            modal?.id === 'forum-thread-modal' && /^#\/forum\/posts\/\d+$/.test(window.location.hash);
+        if (!routed) return closeModal(modal);
+        if (history.state?.routed) history.back();
+        else {
+            const fallback = modal.id === 'forum-thread-modal' ? '#/forum' :
+                state.canteens.find(stall => stall.id === state.detailId)?.category_kind === 'campus' ? '#/campus' : '#/canteens';
+            history.replaceState(null, '', fallback);
+            applyRoute();
+        }
+    }
+
+    async function applyRoute() {
+        const version = ++routeVersion;
+        applyingRoute = true;
+        activeRouteHash = window.location.hash;
+        const url = new URL(window.location.hash.slice(1).replace(/^campus$/, '/campus').replace(/^forum$/, '/forum') || '/canteens', window.location.origin);
+        const detail = /^\/stalls\/(\d+)$/.exec(url.pathname);
+        const thread = /^\/forum\/posts\/(\d+)$/.exec(url.pathname);
+        const parent = (detail || thread) ? history.state?.parent : null;
+        const listUrl = parent ? new URL(parent.hash.slice(1), window.location.origin) : url;
+        let view = Object.keys(viewPaths).find(name => viewPaths[name] === listUrl.pathname) || 'stalls';
+        if (thread) view = 'forum';
+        if (detail && !parent) view = state.canteens.find(stall => stall.id === Number(detail[1]))?.category_kind === 'campus' ? 'campus' : 'stalls';
+        if (view === 'admin' && !state.isAdmin) view = 'stalls';
+        const snapshot = parent?.ui || history.state?.ui;
+        $$('.modal.is-open').forEach(closeModal);
+        const location = Number(listUrl.searchParams.get('location'));
+        state.categoryFilter = location > 0 && Number.isSafeInteger(location) ? location : null;
+        state.search = listUrl.searchParams.get('q') || '';
+        state.ratedOnly = listUrl.searchParams.get('rated') === '1';
+        state.sort = ['number', 'score', 'reviews', 'name'].includes(listUrl.searchParams.get('sort')) ? listUrl.searchParams.get('sort') : 'number';
+        state.expandedCategories = new Set(snapshot?.expanded || []);
+        $('#search-input').value = state.search;
+        campusLocationFilter = listUrl.searchParams.get('location') || '';
+        $('#campus-food-search').value = view === 'campus' ? listUrl.searchParams.get('q') || '' : '';
+        $('#forum-kind-filter').value = ['recommend', 'avoid'].includes(listUrl.searchParams.get('kind')) ? listUrl.searchParams.get('kind') : '';
+        showView(view);
+        renderCategoryNav();
+        renderCanteenGrid();
+        if (view === 'forum') {
+            if (snapshot?.forumRows?.length) {
+                forumListRequest++;
+                forumCachedRows = snapshot.forumRows;
+                forumCursor = forumCachedRows.at(-1).id;
+                $('#forum-post-list').innerHTML = forumRowsHtml(forumCachedRows);
+                $('#forum-more').hidden = !snapshot.forumMore;
+                $('#forum-more').disabled = false;
+            } else await loadForum();
+        }
+        if (version !== routeVersion) return;
+        if (detail) await openDetail(Number(detail[1]));
+        if (thread) await openForumThread(Number(thread[1]));
+        if (version !== routeVersion) return;
+        const canonical = detail ? '#/stalls/' + detail[1] : thread ? '#/forum/posts/' + thread[1] : listHash();
+        history.replaceState(history.state, '', canonical);
+        activeRouteHash = canonical;
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        if (version === routeVersion) {
+            window.scrollTo({ top: snapshot?.scroll || 0, behavior: 'instant' });
+            applyingRoute = false;
+        }
     }
 
     async function useBackupIfNeeded() {
@@ -1081,14 +1204,22 @@
             return;
         }
 
+        if (!applyingRoute) {
+            saveRouteState();
+            $$('.modal.is-open').forEach(closeModal);
+            state.view = name;
+            const hash = listHash();
+            if (window.location.hash !== hash) history.pushState(null, '', hash);
+            activeRouteHash = hash;
+        }
         state.view = name;
         $$('.view').forEach(view => view.classList.toggle('is-active', view.id === `view-${name}`));
         $$('.nav-link').forEach(link => link.classList.toggle('is-active', link.dataset.nav === name));
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        if (!applyingRoute) window.scrollTo({ top: 0, behavior: 'instant' });
 
         if (name === 'ranking') renderRanking();
         if (name === 'campus') renderCampusFood();
-        if (name === 'forum') loadForum();
+        if (name === 'forum' && !applyingRoute) loadForum();
         if (name === 'admin') loadAdminAll();
     }
 
@@ -1101,12 +1232,25 @@
 
     let forumCursor = 0;
     let forumListRequest = 0;
+    let forumCachedRows = [];
     let threadId = null;
     let replyCursor = 0;
     let forumThreadRequest = 0;
 
     function forumBadge(kind) {
         return kind === 'avoid' ? '<span class="badge badge-red">避雷</span>' : '<span class="badge badge-amber">推荐</span>';
+    }
+
+    function forumRowsHtml(rows) {
+        return rows.map(post => `<article class="detail-panel stack">
+            <div class="panel-head"><h3>${forumBadge(post.kind)} ${escapeHtml(post.name)}</h3></div>
+            <p class="muted">${escapeHtml(post.address)}</p>
+            <p class="comment-text">${escapeHtml(post.content)}</p>
+            <div class="panel-head">
+                <span class="muted">${escapeHtml(post.author)} · ${escapeHtml(post.created_at.slice(0, 16))}</span>
+                <button type="button" class="btn btn-soft btn-sm" data-action="forum-open" data-id="${Number(post.id)}">查看帖子 · ${formatNumber(post.reply_count)} 条回复</button>
+            </div>
+        </article>`).join('');
     }
 
     async function loadForum(append = false) {
@@ -1123,19 +1267,13 @@
             const kind = $('#forum-kind-filter').value;
             const data = await api(`/api/forum/posts?kind=${encodeURIComponent(kind)}&cursor=${forumCursor}`);
             if (request !== forumListRequest) return;
-            const html = data.rows.map(post => `<article class="detail-panel stack">
-                <div class="panel-head"><h3>${forumBadge(post.kind)} ${escapeHtml(post.name)}</h3></div>
-                <p class="muted">${escapeHtml(post.address)}</p>
-                <p class="comment-text">${escapeHtml(post.content)}</p>
-                <div class="panel-head">
-                    <span class="muted">${escapeHtml(post.author)} · ${escapeHtml(post.created_at.slice(0, 16))}</span>
-                    <button type="button" class="btn btn-soft btn-sm" data-action="forum-open" data-id="${Number(post.id)}">查看帖子 · ${formatNumber(post.reply_count)} 条回复</button>
-                </div>
-            </article>`).join('');
+            const html = forumRowsHtml(data.rows);
+            forumCachedRows = append ? forumCachedRows.concat(data.rows) : data.rows;
             if (append) list.insertAdjacentHTML('beforeend', html);
             else list.innerHTML = html || emptyState('这里还没有帖子', '欢迎分享你的校外美食推荐或避雷经历。');
             forumCursor = data.rows.at(-1)?.id ?? forumCursor;
             more.hidden = !data.more;
+            saveRouteState();
         } catch (error) {
             if (request !== forumListRequest) return;
             if (append) toast(error.message, 'error');
@@ -1146,6 +1284,7 @@
     }
 
     async function openForumThread(id, append = false) {
+        if (!append) openContentRoute('#/forum/posts/' + id);
         const request = ++forumThreadRequest;
         const modal = $('#forum-thread-modal');
         const content = $('#forum-thread-content');
@@ -1171,6 +1310,7 @@
                 <p>地址：${escapeHtml(post.address)}</p>
                 <p class="comment-text">${escapeHtml(post.content)}</p>
                 <p class="muted">1 楼 · ${escapeHtml(post.author)} · ${escapeHtml(post.created_at.slice(0, 16))}</p>
+                <div><button type="button" class="btn btn-soft btn-sm" data-action="copy-content-link">复制帖子链接</button></div>
                 ${post.can_delete ? `<div><button type="button" class="link-btn" data-action="forum-delete" data-id="${Number(post.id)}">删除帖子</button></div>` : ''}
             </article>`;
             const html = rows.map(reply => `<article class="detail-panel">
@@ -1185,7 +1325,17 @@
         } catch (error) {
             if (request !== forumThreadRequest) return;
             if (append) toast(error.message, 'error');
-            else content.textContent = error.message;
+            else {
+                content.replaceChildren();
+                const message = document.createElement('p');
+                message.textContent = error.status === 404 ? '帖子已删除或不存在。' : error.message;
+                const back = document.createElement('button');
+                back.type = 'button';
+                back.className = 'btn btn-soft';
+                back.textContent = '返回论坛';
+                back.setAttribute('data-close-modal', '');
+                content.append(message, back);
+            }
         } finally {
             if (request === forumThreadRequest) more.disabled = false;
         }
@@ -1254,6 +1404,7 @@
         const canteenId = Number(id);
         if (!canteenId) return;
 
+        openContentRoute('#/stalls/' + canteenId);
         state.detailId = canteenId;
         destroyChart();
         openModal($('#detail-modal'));
@@ -1272,6 +1423,7 @@
                     <h3>加载失败</h3>
                     <p>${escapeHtml(error.message)}</p>
                     <button type="button" class="btn btn-soft btn-sm" style="margin-top:14px" data-action="open-detail" data-id="${canteenId}">重试</button>
+                    <button type="button" class="btn btn-ghost btn-sm" data-close-modal>返回列表</button>
                 </div>
             </div>`;
         }
@@ -1344,6 +1496,7 @@
                         <div class="detail-meta">综合评分</div>
                     </div>
                     <button type="button" class="btn btn-light btn-sm" data-action="open-rating" data-id="${Number(data.id)}">写评价</button>
+                    <button type="button" class="btn btn-ghost-light btn-sm" data-action="copy-content-link">复制链接</button>
                 </div>
             </div>
             <div class="detail-body">
@@ -2757,7 +2910,7 @@
             if (event.key === 'Escape') {
                 const openModals = $$('.modal.is-open');
                 if (openModals.length) {
-                    closeModal(openModals[openModals.length - 1]);
+                    dismissModal(openModals[openModals.length - 1]);
                 }
             }
         });
@@ -2766,7 +2919,7 @@
     function handleDocumentClick(event) {
         const closeTrigger = event.target.closest('[data-close-modal]');
         if (closeTrigger) {
-            closeModal(closeTrigger.closest('.modal'));
+            dismissModal(closeTrigger.closest('.modal'));
             return;
         }
 
@@ -2812,6 +2965,11 @@
         const id = rawId && /^\d+$/.test(rawId) ? Number(rawId) : null;
 
         switch (action) {
+            case 'copy-content-link':
+                navigator.clipboard.writeText(window.location.href)
+                    .then(() => toast('链接已复制'))
+                    .catch(() => toast('复制失败，可复制浏览器地址栏里的链接', 'error'));
+                break;
             case 'forum-compose':
                 $('#forum-compose-form').reset();
                 clearError($('#forum-compose-error'));
@@ -2823,7 +2981,7 @@
             case 'forum-delete':
                 if (id && window.confirm('删除这条帖子及其所有回复？')) {
                     api(`/api/forum/posts/${id}`, { method: 'DELETE' }).then(() => {
-                        if (threadId === id) closeModal($('#forum-thread-modal'));
+                        if (threadId === id) dismissModal($('#forum-thread-modal'));
                         toast('帖子已删除');
                         loadForum();
                     }).catch(error => toast(error.message, 'error'));
