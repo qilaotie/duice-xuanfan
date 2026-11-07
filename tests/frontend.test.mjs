@@ -171,6 +171,66 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await page.goto(link);
         await waitFor(page, '#forum-reply-form');
     });
+    await scenario('PHOTO-01 draft gallery, zoom, keyboard and nested modal focus', async page => {
+        await page.locator('#canteen-grid [data-id="1"][data-action="open-detail"]').click();
+        await page.locator('#detail-content [data-action="open-rating"]').click();
+        const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jO9sAAAAASUVORK5CYII=', 'base64');
+        await page.locator('#rating-photo').setInputFiles([
+            { name: 'one.png', mimeType: 'image/png', buffer: png },
+            { name: 'two.png', mimeType: 'image/png', buffer: png }
+        ]);
+        const first = page.locator('#rating-photo-preview a').first();
+        await first.click();
+        const viewer = page.locator('#photo-viewer-modal');
+        await viewer.waitFor({ state: 'visible' });
+        await page.waitForFunction(() => document.querySelector('#photo-viewer-image').naturalWidth > 0);
+        assert.equal(await page.locator('#photo-viewer-count').textContent(), '1 / 2');
+        assert.equal(await page.locator('#rating-modal').evaluate(element => element.inert), true);
+        await page.keyboard.press('ArrowRight');
+        assert.equal(await page.locator('#photo-viewer-count').textContent(), '2 / 2');
+        await page.getByRole('button', { name: '放大照片', exact: true }).click();
+        assert.ok(await page.locator('#photo-viewer-image').evaluate(image => image.clientWidth > image.parentElement.clientWidth));
+        await page.getByRole('button', { name: '适合屏幕', exact: true }).click();
+        await page.getByRole('button', { name: '关闭照片', exact: true }).focus();
+        await page.keyboard.press('Tab');
+        assert.equal(await viewer.evaluate(element => element.contains(document.activeElement)), true);
+        await page.keyboard.press('Escape');
+        await viewer.waitFor({ state: 'hidden' });
+        assert.equal(await page.locator('#rating-modal').evaluate(element => element.inert), false);
+        assert.equal(await first.evaluate(element => element === document.activeElement), true);
+        assert.equal(await page.locator('#rating-photo-preview img').count(), 2);
+        await page.goForward();
+        await viewer.waitFor({ state: 'visible' });
+        await page.goBack();
+        await viewer.waitFor({ state: 'hidden' });
+        await page.locator('#rating-modal').waitFor({ state: 'visible' });
+    });
+    await scenario('LAYOUT-01 compact mobile headings and viewport', async page => {
+        await page.setViewportSize({ width: 390, height: 844 });
+        for (const view of ['campus', 'forum', 'ranking']) {
+            await page.locator('[data-nav="' + view + '"]').click();
+            const heading = page.locator('#view-' + view + ' .section-hero');
+            assert.ok((await heading.boundingBox()).height < 215, view + ' header should be compact');
+            assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+        }
+    });
+    await scenario('DINING-01 parent filters, floors, east district exception and URL restore', async page => {
+        await page.locator('[data-dining-group="竹园"]').click();
+        await page.waitForURL(/group=/);
+        assert.equal(await page.locator('#canteen-grid .stall-row').count(), 3);
+        await page.locator('[data-category="7"]').click();
+        assert.equal(await page.locator('#canteen-grid .stall-row').count(), 1);
+        await page.locator('[data-dining-group="东区"]').click();
+        assert.equal(await page.locator('#canteen-grid .stall-row').count(), 2);
+        await page.reload();
+        await page.locator('#canteen-grid .stall-row').first().waitFor();
+        assert.equal(await page.locator('#canteen-grid .stall-row').count(), 2);
+        await page.locator('[data-category="14"]').click();
+        await page.locator('#canteen-grid [data-id="7"][data-action="open-detail"]').waitFor();
+        await page.locator('#canteen-grid [data-id="7"][data-action="open-detail"]').click();
+        await page.locator('#detail-content [data-action="open-rating"]').click();
+        assert.equal(await page.locator('#rating-category option[value="14"]').textContent(), '东区 · 二楼 · 西军电餐厅');
+    });
     const summary = coverage.getCoverageSummary().toJSON();
     await mkdir('test-results', { recursive: true });
     await writeFile('test-results/frontend-coverage.json', JSON.stringify(coverage.toJSON(), null, 2));

@@ -2633,3 +2633,198 @@ button.comment-avatar { cursor: pointer; }
         transition-duration: .01ms !important;
     }
 }
+
+/* Secondary pages share a compact title and consistent content spacing. */
+.section-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 24px;
+    padding: 22px 28px;
+    border-radius: 20px;
+    box-shadow: var(--shadow-xs);
+}
+
+.section-hero::after { display: none; }
+.section-hero .eyebrow { grid-column: 1; font-size: 10px; }
+.section-hero h1 { grid-column: 1; margin: 6px 0 8px; font-size: 28px; }
+.section-hero p { grid-column: 1; max-width: none; margin: 0; font-size: 13px; }
+.section-hero .hero-actions { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
+.content-head > .field { margin: 0; min-width: 140px; }
+.campus-results .panel-head h2 { margin: 0; font-size: 18px; }
+.campus-results .panel-head h3 { font-size: 14px; }
+.campus-results .detail-panel.stack { gap: 16px; }
+#forum-post-list .detail-panel { gap: 12px; }
+#forum-post-list .detail-panel p,
+#forum-post-list .panel-head,
+#forum-post-list .panel-head h3 { margin: 0; }
+#forum-replies { margin: 16px 0; }
+#forum-more-replies { margin-bottom: 16px; }
+#forum-thread-modal .modal-card { width: min(700px, 100%); }
+#forum-thread-content .comment-text { font-size: 15px; line-height: 1.8; }
+
+.photo-viewer-card {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    width: min(1080px, 100%);
+    height: min(820px, calc(100dvh - 40px));
+    min-height: 0;
+    border-radius: 18px;
+    overflow: hidden;
+    background: #112323;
+    color: #fff;
+}
+
+.photo-viewer-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+}
+.photo-viewer-toolbar h2 { margin: 0 auto 0 0; font-size: 15px; }
+.photo-viewer-toolbar .icon-btn { flex: none; }
+.photo-viewer-stage {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    display: grid;
+    align-items: start;
+    justify-items: start;
+    background: #091515;
+    touch-action: pan-y pinch-zoom;
+}
+#photo-viewer-image {
+    display: block;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    object-fit: contain;
+    grid-area: 1 / 1;
+}
+#photo-viewer-message {
+    align-self: center;
+    justify-self: center;
+    grid-area: 1 / 1;
+    color: #d3e2e2;
+}
+.photo-viewer-navigation {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 16px;
+}
+.photo-viewer-navigation span { font-size: 12px; color: #bdd0d0; }
+.detail-photo { cursor: zoom-in; }
+.photo-open { display: block; border: 0; padding: 0; border-radius: 10px; background: transparent; cursor: zoom-in; }
+.photo-open:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.modal-card:focus-visible,
+.photo-viewer-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+@media (max-width: 640px) {
+    .section-hero { display: block; padding: 18px 20px; border-radius: 18px; }
+    .section-hero .eyebrow { display: none; }
+    .section-hero h1 { margin: 0 0 8px; font-size: 25px; }
+    .section-hero p { display: block; margin: 0; font-size: 12px; }
+    .section-hero .hero-actions { margin-top: 14px; gap: 8px; }
+    .section-hero .btn { min-height: 42px; padding: 9px 13px; font-size: 12px; }
+    .photo-viewer { padding: 0; }
+    .photo-viewer-card { width: 100%; height: 100dvh; border-radius: 0; }
+    .photo-viewer-toolbar { padding: 10px 12px; }
+    .photo-viewer-toolbar h2 { flex-basis: calc(100% - 65px); }
+    .photo-viewer-navigation { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+    .photo-viewer-navigation span { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .modal-card, .detail-sheet, .modal-backdrop { animation: none; }
+}
+
+.dining-directory-group + .dining-directory-group { margin-top: 8px; }
+.dining-floor-links { padding: 2px 0 4px 18px; }
+.dining-floor-links .category-btn { font-size: 12px; padding-top: 7px; padding-bottom: 7px; }
+.dining-result-group > h2 { margin: 4px 0 0; font-size: 18px; }
+.dining-result-group + .dining-result-group { margin-top: 18px; }
+
+@media (max-width: 960px) {
+    .dining-directory { flex-wrap: wrap; overflow: visible; }
+    .dining-directory-group { display: contents; }
+    .dining-floor-links { display: none; }
+    .dining-directory-group:has(.is-active) .dining-floor-links {
+        display: flex;
+        flex-wrap: wrap;
+        order: 2;
+        flex: 1 0 100%;
+        gap: 6px;
+        padding: 8px 0 0;
+    }
+}
+
+/* Make restaurant, floor and service-window levels visually distinct. */
+.dining-result-group > h2 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 0 4px 12px;
+    border-left: 4px solid var(--primary);
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--ink);
+}
+#canteen-grid .category-head {
+    min-height: 58px;
+    padding: 12px 16px;
+    background: #eaf4f1;
+    border-bottom: 1px solid #d5e7e0;
+}
+#canteen-grid button.category-head:hover { background: #dfefe8; }
+.floor-heading-badge {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    min-width: 46px;
+    min-height: 30px;
+    padding: 4px 8px;
+    border-radius: 8px;
+    background: #0f766e;
+    color: white;
+    font-size: 14px;
+    font-weight: 800;
+}
+#canteen-grid .category-title { color: #275a51; font-size: 13px; font-weight: 600; }
+#canteen-grid .stall-row { padding-left: 24px; }
+#category-nav .dining-directory-group > .category-btn {
+    font-size: 14px;
+    font-weight: 800;
+}
+#category-nav .dining-floor-links {
+    margin: 3px 0 10px 18px;
+    padding: 0 0 0 10px;
+    border-left: 2px solid #d9e7e2;
+}
+#category-nav .dining-floor-links .category-btn {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+}
+#category-nav .dining-floor-links .category-btn.is-active { color: var(--primary); font-weight: 800; }
+
+@media (max-width: 960px) {
+    #category-nav .dining-floor-links {
+        margin: 0;
+        padding: 8px 0 0;
+        border-left: 0;
+        border-top: 1px solid var(--line);
+    }
+}
+@media (max-width: 520px) {
+    .dining-result-group > h2 { font-size: 19px; }
+    #canteen-grid .category-head { gap: 8px; flex-wrap: wrap; padding: 11px 12px; }
+    #canteen-grid .category-title { font-size: 12px; }
+    #canteen-grid .category-stats { font-size: 10px; }
+    #canteen-grid .stall-row { padding-left: 14px; }
+}

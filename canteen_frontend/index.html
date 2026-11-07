@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=unified-views">
+    <link rel="stylesheet" href="styles.css?v=dining-hierarchy">
 </head>
 <body>
 <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -573,6 +573,28 @@
         </form>
     </div>
 </div>
-<script src="app.js?v=content-routes" defer></script>
+<div class="modal photo-viewer" id="photo-viewer-modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="photo-viewer-card" role="dialog" aria-modal="true" aria-labelledby="photo-viewer-title" tabindex="-1">
+        <div class="photo-viewer-toolbar">
+            <h2 id="photo-viewer-title">查看照片</h2>
+            <span id="photo-viewer-count" role="status"></span>
+            <button type="button" class="btn btn-ghost-light btn-sm" data-action="photo-zoom-out" aria-label="缩小照片">−</button>
+            <button type="button" class="btn btn-ghost-light btn-sm" data-action="photo-reset">适合屏幕</button>
+            <button type="button" class="btn btn-ghost-light btn-sm" data-action="photo-zoom-in" aria-label="放大照片">＋</button>
+            <button type="button" class="icon-btn" data-close-modal aria-label="关闭照片">×</button>
+        </div>
+        <div class="photo-viewer-stage" id="photo-viewer-stage">
+            <img id="photo-viewer-image" alt="" draggable="false">
+            <p id="photo-viewer-message" role="status"></p>
+        </div>
+        <div class="photo-viewer-navigation">
+            <button type="button" class="btn btn-ghost-light" id="photo-viewer-previous" data-action="photo-previous">上一张</button>
+            <span>左右切换 · 放大后可滚动查看</span>
+            <button type="button" class="btn btn-ghost-light" id="photo-viewer-next" data-action="photo-next">下一张</button>
+        </div>
+    </div>
+</div>
+<script src="app.js?v=dining-floors" defer></script>
 </body>
 </html>

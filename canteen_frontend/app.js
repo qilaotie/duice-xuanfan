@@ -13,6 +13,7 @@
         ranking: [],
         rankingMode: 'all',
         categoryFilter: null,
+        diningGroupFilter: '',
         search: '',
         ratedOnly: false,
         sort: 'number',
@@ -104,6 +105,7 @@
         const query = new URLSearchParams();
         if (state.view === 'stalls') {
             if (state.categoryFilter !== null) query.set('location', state.categoryFilter);
+            if (state.diningGroupFilter) query.set('group', state.diningGroupFilter);
             if (state.search) query.set('q', state.search);
             if (state.ratedOnly) query.set('rated', '1');
             if (state.sort !== 'number') query.set('sort', state.sort);
@@ -141,6 +143,10 @@
     }
 
     function dismissModal(modal) {
+        if (modal?.id === 'photo-viewer-modal' && history.state?.photoViewer) {
+            history.back();
+            return;
+        }
         const routed = modal?.id === 'detail-modal' && /^#\/stalls\/\d+$/.test(window.location.hash) ||
             modal?.id === 'forum-thread-modal' && /^#\/forum\/posts\/\d+$/.test(window.location.hash);
         if (!routed) return closeModal(modal);
@@ -154,6 +160,17 @@
     }
 
     async function applyRoute() {
+        if (activeRouteHash === window.location.hash) {
+            const photoModal = $('#photo-viewer-modal');
+            if (photoModal.classList.contains('is-open') && !history.state?.photoViewer) {
+                closeModal(photoModal);
+                return;
+            }
+            if (history.state?.photoViewer && !photoModal.classList.contains('is-open')) {
+                showPhotoViewer(history.state.photoViewer.photos, history.state.photoViewer.index, false);
+                return;
+            }
+        }
         const version = ++routeVersion;
         const requestedHash = window.location.hash;
         applyingRoute = true;
@@ -171,6 +188,7 @@
         $$('.modal.is-open').forEach(closeModal);
         const location = Number(listUrl.searchParams.get('location'));
         state.categoryFilter = location > 0 && Number.isSafeInteger(location) ? location : null;
+        state.diningGroupFilter = listUrl.searchParams.get('group') || '';
         state.search = listUrl.searchParams.get('q') || '';
         state.ratedOnly = listUrl.searchParams.get('rated') === '1';
         state.sort = ['number', 'score', 'reviews', 'name'].includes(listUrl.searchParams.get('sort')) ? listUrl.searchParams.get('sort') : 'number';
@@ -200,6 +218,9 @@
         const canonical = detail ? '#/stalls/' + detail[1] : thread ? '#/forum/posts/' + thread[1] : listHash();
         history.replaceState(history.state, '', canonical);
         activeRouteHash = canonical;
+        if (history.state?.photoViewer) {
+            showPhotoViewer(history.state.photoViewer.photos, history.state.photoViewer.index, false);
+        }
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         if (version === routeVersion) {
             window.scrollTo({ top: snapshot?.scroll || 0, behavior: 'instant' });
@@ -716,7 +737,7 @@
         const ratingRows = state.ranking.filter(row => row.avg_score !== null && row.avg_score !== undefined);
         const totalRatings = ratingRows.reduce((sum, row) => sum + (Number(row.rating_count) || 0), 0);
         container.innerHTML = `
-            <div class="stat-card"><strong>${formatNumber(getCategories().filter(category => category.kind !== 'campus').length)}</strong><span>食堂</span></div>
+            <div class="stat-card"><strong>${formatNumber(diningGroups().length)}</strong><span>食堂</span></div>
             <div class="stat-card"><strong>${formatNumber(diningStalls().length)}</strong><span>档口</span></div>
             <div class="stat-card"><strong>${formatNumber(totalRatings)}</strong><span>条评价</span></div>
         `;
@@ -738,25 +759,36 @@
             state.categoryFilter = null;
         }
 
-        const items = [
-            { id: 'all', name: '全部档口', count: stalls.length }
-        ].concat(categories.map(category => ({
-            id: category.id,
-            name: category.name,
-            count: counts.get(String(category.id)) || 0
-        })));
-
-        nav.innerHTML = items.map((item, index) => {
-            const active = item.id === 'all'
-                ? state.categoryFilter === null
-                : String(state.categoryFilter) === String(item.id);
-            const dot = item.id === 'all' ? '#0f766e' : CATEGORY_DOTS[index % CATEGORY_DOTS.length];
-            return `<button type="button" class="category-btn${active ? ' is-active' : ''}" data-category="${escapeHtml(item.id)}">
-                <span class="cat-dot" style="background:${dot}"></span>
-                <span class="cat-name">${escapeHtml(item.name)}</span>
-                <span class="cat-count">${formatNumber(item.count)}</span>
-            </button>`;
+        const groups = diningGroups();
+        if (!groups.some(group => group.name === state.diningGroupFilter)) state.diningGroupFilter = '';
+        nav.classList.add('dining-directory');
+        nav.innerHTML = `<button type="button" class="category-btn${state.categoryFilter === null && !state.diningGroupFilter ? ' is-active' : ''}" data-category="all">
+            <span class="cat-name">全部档口</span><span class="cat-count">${stalls.length}</span>
+        </button>` + groups.map((group, index) => {
+            const total = group.floors.reduce((sum, floor) => sum + (counts.get(String(floor.id)) || 0), 0);
+            return `<div class="dining-directory-group">
+                <button type="button" class="category-btn${state.diningGroupFilter === group.name ? ' is-active' : ''}" data-dining-group="${escapeHtml(group.name)}">
+                    <span class="cat-dot" style="background:${CATEGORY_DOTS[index % CATEGORY_DOTS.length]}"></span>
+                    <span class="cat-name">${escapeHtml(group.name)}</span><span class="cat-count">${total}</span>
+                </button>
+                <div class="dining-floor-links">${group.floors.map(floor => `<button type="button" class="category-btn${state.categoryFilter === floor.id ? ' is-active' : ''}" data-category="${floor.id}">
+                    <span class="cat-name">${escapeHtml(floor.label)}</span><span class="cat-count">${counts.get(String(floor.id)) || 0}</span>
+                </button>`).join('')}</div>
+            </div>`;
         }).join('');
+    }
+
+    function diningGroups() {
+        const groups = new Map();
+        for (const category of getCategories().filter(item => item.kind !== 'campus')) {
+            const match = /^(.*?)([一二三四五六七八九十\d]+)[层楼](?:餐厅)?$/.exec(category.name);
+            const special = category.id === 14;
+            const name = special ? '东区' : match ? match[1] : category.name;
+            const label = special ? '二楼 · ' + category.name : match ? match[2] + '楼' : category.name;
+            if (!groups.has(name)) groups.set(name, { name, floors: [] });
+            groups.get(name).floors.push({ ...category, label });
+        }
+        return Array.from(groups.values());
     }
 
     function diningStalls() {
@@ -823,6 +855,7 @@
 
     function setCategoryFilter(value) {
         state.categoryFilter = value === 'all' ? null : Number(value);
+        state.diningGroupFilter = '';
         renderCategoryNav();
         renderCanteenGrid();
     }
@@ -842,7 +875,10 @@
 
     function filterCanteens() {
         const keyword = state.search.toLowerCase();
+        const selectedGroup = diningGroups().find(group => group.name === state.diningGroupFilter);
+        const selectedFloors = selectedGroup ? new Set(selectedGroup.floors.map(floor => floor.id)) : null;
         return diningStalls().filter(canteen => {
+            if (selectedFloors && !selectedFloors.has(canteen.category_id)) return false;
             if (state.categoryFilter !== null && String(canteen.category_id) !== String(state.categoryFilter)) {
                 return false;
             }
@@ -945,21 +981,18 @@
         const visibleItems = expanded ? group.items : group.items.slice(0, 3);
         const collapsible = !single && !searching && group.items.length > 3;
         const average = categoryAverage(group.items, rankingById);
-        const dotColor = CATEGORY_DOTS[index % CATEGORY_DOTS.length];
         const stats = `${formatNumber(group.items.length)} 个档口${average ? ` · 均分 ${average}` : ''}`;
-
-        let header = '';
-        if (!single) {
-            const inner = `<span class="cat-dot" style="background:${dotColor}"></span>
+        const floor = diningGroups().flatMap(parent => parent.floors).find(item => item.id === group.id);
+        const floorName = floor?.label.split(' · ')[0];
+        const hasFloor = /^[一二三四五六七八九十\d]+楼$/.test(floorName || '');
+        const inner = `<span class="floor-heading-badge">${escapeHtml(hasFloor ? floorName : '餐厅')}</span>
                 <span class="category-title">${escapeHtml(group.name)}</span>
                 <span class="category-stats">${stats}</span>
                 ${collapsible ? `<span class="category-chevron" aria-hidden="true">${expanded ? '▴' : '▾'}</span>` : ''}`;
 
-            header = collapsible
+        const header = collapsible
                 ? `<button type="button" class="category-head" data-action="toggle-category" data-id="${escapeHtml(group.key)}" aria-expanded="${expanded}">${inner}</button>`
                 : `<div class="category-head is-static">${inner}</div>`;
-        }
-
         const rows = visibleItems.map(canteen => stallRowHtml(canteen, rankingById)).join('');
         const footer = collapsible
             ? `<button type="button" class="category-more" data-action="toggle-category" data-id="${escapeHtml(group.key)}">${expanded ? '收起' : `展开全部 ${formatNumber(group.items.length)} 个档口`}</button>`
@@ -1018,12 +1051,22 @@
             return;
         }
 
-        grid.innerHTML = groups.map((group, index) => renderCategoryBlock(group, {
+        const blocks = groups.map((group, index) => ({ group, html: renderCategoryBlock(group, {
             single,
             searching,
             index,
             rankingById
-        })).join('');
+        }) }));
+        if (single) grid.innerHTML = blocks.map(block => block.html).join('');
+        else {
+            const parents = diningGroups();
+            grid.innerHTML = parents.map(parent => {
+                const floors = blocks.filter(block => parent.floors.some(floor => floor.id === block.group.id));
+                return floors.length ? `<section class="dining-result-group stack"><h2>${escapeHtml(parent.name)}</h2>${floors.map(floor => floor.html).join('')}</section>` : '';
+            }).join('');
+            const ungrouped = blocks.filter(block => !parents.some(parent => parent.floors.some(floor => floor.id === block.group.id)));
+            grid.insertAdjacentHTML('beforeend', ungrouped.map(block => block.html).join(''));
+        }
     }
 
     function updateListHeading(rows, groups, rankingById) {
@@ -1033,14 +1076,14 @@
 
         const single = state.categoryFilter !== null;
         if (!single) {
-            title.textContent = '全部档口';
+            title.textContent = state.diningGroupFilter ? state.diningGroupFilter + ' · 全部楼层' : '全部档口';
         } else {
             const category = getCategories().find(item => String(item.id) === String(state.categoryFilter));
             title.textContent = category ? category.name : '全部档口';
         }
 
         const parts = [`${formatNumber(rows.length)} 个档口`];
-        if (!single) parts.push(`${formatNumber(groups.length)} 个食堂`);
+        if (!single) parts.push(`${formatNumber(groups.length)} 个楼层`);
 
         if (single) {
             const average = categoryAverage(rows, rankingById);
@@ -1089,6 +1132,7 @@
     function resetFilters() {
         state.search = '';
         state.categoryFilter = null;
+        state.diningGroupFilter = '';
         state.ratedOnly = false;
         state.expandedCategories.clear();
         const input = $('#search-input');
@@ -1591,7 +1635,11 @@
     }
 
     function photoImage(url, alt, className = 'detail-photo') {
-        return url ? `<img class="${className}" src="${escapeHtml((window.CANTEEN_API_ORIGIN || '') + url)}" alt="${escapeHtml(alt)}" loading="lazy">` : '';
+        if (!url) return '';
+        const image = `<img class="${className}" src="${escapeHtml((window.CANTEEN_API_ORIGIN || '') + url)}" alt="${escapeHtml(alt)}" loading="lazy">`;
+        return className === 'detail-photo'
+            ? `<button type="button" class="photo-open" data-photo-open aria-label="查看${escapeHtml(alt)}大图">${image}</button>`
+            : image;
     }
 
     function reviewPhotoUrls(review) {
@@ -1874,9 +1922,10 @@
 
         const campus = state.ratingScope === 'campus';
         const categories = getCategories().filter(category => (category.kind === 'campus') === campus);
-        select.innerHTML = (campus ? '<option value="">请选择校内地点</option>' : '<option value="">请选择食堂</option>') + categories
-            .map(category => `<option value="${category.id}">${escapeHtml(category.name)}</option>`)
-            .join('');
+        select.innerHTML = campus
+            ? '<option value="">请选择校内地点</option>' + categories.map(category => `<option value="${category.id}">${escapeHtml(category.name)}</option>`).join('')
+            : '<option value="">请选择食堂和楼层</option>' + diningGroups().map(group => `<optgroup label="${escapeHtml(group.name)}">${group.floors.map(floor =>
+                `<option value="${floor.id}">${escapeHtml(group.name + ' · ' + floor.label)}</option>`).join('')}</optgroup>`).join('');
 
         const selected = selectedCanteenId
             ? state.canteens.find(canteen => Number(canteen.id) === Number(selectedCanteenId))
@@ -2727,23 +2776,140 @@
 
     /* ---------------- 弹层交互 ---------------- */
 
+    const modalStack = [];
+    const modalFocusOrigins = new WeakMap();
+
+    function updateModalLayers() {
+        const top = modalStack.at(-1);
+        $$('.modal').forEach(modal => {
+            const index = modalStack.indexOf(modal);
+            modal.style.zIndex = index < 0 ? '' : String(80 + index * 2);
+            modal.inert = modal !== top;
+            modal.setAttribute('aria-hidden', String(modal !== top));
+        });
+        $$('header.site-header, main.page').forEach(region => { region.inert = Boolean(top); });
+    }
+
     function openModal(modal) {
         if (!modal) return;
+        if (!modalStack.includes(modal)) {
+            modalFocusOrigins.set(modal, document.activeElement);
+            modalStack.push(modal);
+        }
         modal.classList.add('is-open');
         modal.setAttribute('aria-hidden', 'false');
         document.body.classList.add('modal-open');
+        updateModalLayers();
 
         const focusTarget = modal.querySelector('input:not([type="hidden"]), textarea, select')
             || modal.querySelector('.modal-close');
         if (focusTarget) {
-            window.setTimeout(() => focusTarget.focus({ preventScroll: true }), 60);
+            window.setTimeout(() => {
+                if (modalStack.at(-1) === modal) focusTarget.focus({ preventScroll: true });
+            }, 60);
+        }
+    }
+
+    let viewerPhotos = [];
+    let viewerIndex = 0;
+    let viewerZoom = 1;
+    let photoGesture = null;
+
+    function openPhotoViewer(image) {
+        const gallery = image.closest('.review-photo-gallery');
+        const images = gallery ? $$('img', gallery) : [image];
+        const photos = images.map(item => ({ src: item.currentSrc || item.src, alt: item.alt || '照片' }));
+        showPhotoViewer(photos, images.indexOf(image), true);
+    }
+
+    function showPhotoViewer(photos, index, record) {
+        viewerPhotos = photos;
+        viewerIndex = index;
+        if (record) {
+            history.pushState({ ...history.state, photoViewer: { photos, index } }, '', window.location.href);
+        }
+        openModal($('#photo-viewer-modal'));
+        showViewerPhoto();
+    }
+
+    function resizeViewerPhoto() {
+        const stage = $('#photo-viewer-stage');
+        const image = $('#photo-viewer-image');
+        image.style.width = stage.clientWidth * viewerZoom + 'px';
+        image.style.height = stage.clientHeight * viewerZoom + 'px';
+        $('#photo-viewer-modal [data-action="photo-zoom-in"]').disabled = viewerZoom >= 3;
+        $('#photo-viewer-modal [data-action="photo-zoom-out"]').disabled = viewerZoom <= 1;
+    }
+
+    function showViewerPhoto() {
+        const item = viewerPhotos[viewerIndex];
+        if (!item) return;
+        viewerZoom = 1;
+        const stage = $('#photo-viewer-stage');
+        stage.scrollTo(0, 0);
+        $('#photo-viewer-message').textContent = '正在加载照片…';
+        const image = $('#photo-viewer-image');
+        image.alt = item.alt;
+        image.src = item.src;
+        $('#photo-viewer-count').textContent = `${viewerIndex + 1} / ${viewerPhotos.length}`;
+        $('#photo-viewer-previous').disabled = viewerIndex === 0;
+        $('#photo-viewer-next').disabled = viewerIndex === viewerPhotos.length - 1;
+        resizeViewerPhoto();
+    }
+
+    function stepViewerPhoto(direction) {
+        const index = viewerIndex + direction;
+        if (index < 0 || index >= viewerPhotos.length) return;
+        viewerIndex = index;
+        if (history.state?.photoViewer) {
+            history.replaceState({ ...history.state, photoViewer: { photos: viewerPhotos, index } }, '', window.location.href);
+        }
+        showViewerPhoto();
+    }
+
+    function handleModalKeys(event) {
+        const top = modalStack.at(-1);
+        if (!top) return;
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            dismissModal(top);
+            return;
+        }
+        if (top.id === 'photo-viewer-modal') {
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                event.preventDefault();
+                stepViewerPhoto(event.key === 'ArrowLeft' ? -1 : 1);
+            }
+        }
+        if (event.key !== 'Tab') return;
+        const controls = $$('button, a[href], input, select, textarea, [tabindex]', top)
+            .filter(element => !element.disabled && element.tabIndex >= 0 && element.getClientRects().length);
+        const first = controls[0];
+        const last = controls.at(-1);
+        if (!first) {
+            event.preventDefault();
+            return;
+        }
+        if (!top.contains(document.activeElement) || event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            (event.shiftKey ? last : first).focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
         }
     }
 
     function closeModal(modal) {
         if (!modal) return;
+        const wasOpen = modal.classList.contains('is-open');
         modal.classList.remove('is-open');
         modal.setAttribute('aria-hidden', 'true');
+        const stackIndex = modalStack.indexOf(modal);
+        if (stackIndex !== -1) modalStack.splice(stackIndex, 1);
+        if (modal.id === 'photo-viewer-modal') {
+            viewerPhotos = [];
+            $('#photo-viewer-image').removeAttribute('src');
+        }
         if (modal.id === 'forum-thread-modal') {
             threadId = null;
             forumThreadRequest++;
@@ -2768,6 +2934,9 @@
         if (!document.querySelector('.modal.is-open')) {
             document.body.classList.remove('modal-open');
         }
+        updateModalLayers();
+        const target = modalFocusOrigins.get(modal);
+        if (wasOpen && target?.isConnected && !target.closest('[inert]')) target.focus({ preventScroll: true });
     }
 
     function showFileTip() {
@@ -2783,6 +2952,27 @@
     /* ---------------- 事件 ---------------- */
 
     function bindEvents() {
+        $('#photo-viewer-image').addEventListener('load', () => {
+            $('#photo-viewer-message').textContent = '';
+        });
+        $('#photo-viewer-image').addEventListener('error', () => {
+            if (viewerPhotos.length) $('#photo-viewer-message').textContent = '照片加载失败，请关闭后重试。';
+        });
+        window.addEventListener('resize', () => {
+            if (viewerPhotos.length) resizeViewerPhoto();
+        });
+        $('#photo-viewer-stage').addEventListener('pointerdown', event => {
+            photoGesture = event.pointerType === 'touch' && viewerZoom === 1
+                ? { x: event.clientX, y: event.clientY } : null;
+        });
+        $('#photo-viewer-stage').addEventListener('pointerup', event => {
+            if (!photoGesture) return;
+            const dx = event.clientX - photoGesture.x;
+            const dy = event.clientY - photoGesture.y;
+            photoGesture = null;
+            if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) stepViewerPhoto(dx < 0 ? 1 : -1);
+        });
+        $('#photo-viewer-stage').addEventListener('pointercancel', () => { photoGesture = null; });
         $('#forum-kind-filter').addEventListener('change', () => loadForum());
         $('#forum-more').addEventListener('click', () => loadForum(true));
         $('#forum-more-replies').addEventListener('click', () => openForumThread(threadId, true));
@@ -2909,20 +3099,20 @@
                 updateDisplayPhoto(input, input.files[0]);
             }
         });
-        document.addEventListener('keydown', event => {
-            if (event.key === 'Escape') {
-                const openModals = $$('.modal.is-open');
-                if (openModals.length) {
-                    dismissModal(openModals[openModals.length - 1]);
-                }
-            }
-        });
+        document.addEventListener('keydown', handleModalKeys);
     }
 
     function handleDocumentClick(event) {
         const closeTrigger = event.target.closest('[data-close-modal]');
         if (closeTrigger) {
             dismissModal(closeTrigger.closest('.modal'));
+            return;
+        }
+        const photo = event.target.closest('img.review-photo, img.detail-photo');
+        const photoLink = event.target.closest('a, button[data-photo-open]')?.querySelector('img.review-photo, img.detail-photo');
+        if (photo || photoLink) {
+            event.preventDefault();
+            openPhotoViewer(photo || photoLink);
             return;
         }
 
@@ -2933,6 +3123,14 @@
             return;
         }
 
+        const diningGroup = event.target.closest('[data-dining-group]');
+        if (diningGroup) {
+            state.categoryFilter = null;
+            state.diningGroupFilter = diningGroup.dataset.diningGroup;
+            renderCategoryNav();
+            renderCanteenGrid();
+            return;
+        }
         const categoryTrigger = event.target.closest('[data-category]');
         if (categoryTrigger) {
             setCategoryFilter(categoryTrigger.dataset.category);
@@ -2968,6 +3166,19 @@
         const id = rawId && /^\d+$/.test(rawId) ? Number(rawId) : null;
 
         switch (action) {
+            case 'photo-previous':
+                stepViewerPhoto(-1);
+                break;
+            case 'photo-next':
+                stepViewerPhoto(1);
+                break;
+            case 'photo-zoom-in':
+            case 'photo-zoom-out':
+            case 'photo-reset':
+                viewerZoom = action === 'photo-reset' ? 1 : Math.min(3, Math.max(1, viewerZoom + (action === 'photo-zoom-in' ? 0.5 : -0.5)));
+                resizeViewerPhoto();
+                if (viewerZoom === 1) $('#photo-viewer-stage').scrollTo(0, 0);
+                break;
             case 'copy-content-link':
                 navigator.clipboard.writeText(window.location.href)
                     .then(() => toast('链接已复制'))

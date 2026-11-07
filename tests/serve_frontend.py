@@ -16,8 +16,14 @@ with TemporaryDirectory() as directory:
         init_database()
         db.session.add_all([
             Category(id=1, name="测试食堂"),
+            Category(id=6, name="竹园一层餐厅"), Category(id=7, name="竹园二层餐厅"),
+            Category(id=8, name="竹园三层餐厅"), Category(id=13, name="东区一层餐厅"),
+            Category(id=14, name="西军电餐厅"),
             Canteen(id=1, name="01 测试面馆", category_id=1),
             Canteen(id=2, name="测试轻食店", category_id=100001),
+            Canteen(id=3, name="竹园面馆", category_id=6), Canteen(id=4, name="竹园饭馆", category_id=7),
+            Canteen(id=5, name="竹园粉店", category_id=8), Canteen(id=6, name="东区小吃", category_id=13),
+            Canteen(id=7, name="西军电咖啡", category_id=14),
             User(username="admin", password=generate_password_hash("test-admin-password"), is_admin=True),
         ])
         db.session.commit()
