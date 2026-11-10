@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=campus-responsive-2">
+    <link rel="stylesheet" href="styles.css?v=quick-review">
 </head>
 <body>
 <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -372,7 +372,8 @@
             <p>无需登录也可以评价。访客可在当前浏览器查看和管理自己的评价。</p>
         </div>
         <form id="rating-form" class="stack">
-            <div class="field-row">
+            <div id="rating-target-summary" class="rating-target-summary" hidden></div>
+            <div class="field-row" id="rating-location-fields">
                 <label class="field">
                     <span id="rating-category-label">食堂</span>
                     <select id="rating-category">
@@ -386,14 +387,6 @@
                     </select>
                 </label>
             </div>
-            <label class="field">
-                <span>添加要评分的菜品（可选，可添加多道）</span>
-                <select id="rating-dish" disabled>
-                    <option value="">请先选择档口</option>
-                </select>
-            </label>
-            <div id="rating-dish-scores" class="stack"></div>
-            <div><button type="button" id="rating-add-new-dish" class="btn btn-soft btn-sm" disabled>＋ 添加一道新菜</button></div>
             <div class="field">
                 <span>档口整体评分</span>
                 <div class="star-input" id="star-input" role="radiogroup" aria-label="评分">
@@ -408,8 +401,24 @@
             </div>
             <label class="field">
                 <span>评论（可选）</span>
-                <textarea id="rating-comment" rows="4" maxlength="500" placeholder="说说菜品、分量、价格，给同学们一点参考…"></textarea>
+                <textarea id="rating-comment" rows="2" maxlength="500" placeholder="说说菜品、分量、价格，给同学们一点参考…"></textarea>
             </label>
+            <details class="rating-extra" id="rating-dishes-extra">
+                <summary>＋ 给菜品单独评分<span>可选，可添加多道</span></summary>
+                <div class="stack rating-extra-body">
+            <label class="field">
+                <span>添加要评分的菜品（可选，可添加多道）</span>
+                <select id="rating-dish" disabled>
+                    <option value="">请先选择档口</option>
+                </select>
+            </label>
+            <div id="rating-dish-scores" class="stack"></div>
+            <div><button type="button" id="rating-add-new-dish" class="btn btn-soft btn-sm" disabled>＋ 添加一道新菜</button></div>
+                </div>
+            </details>
+            <details class="rating-extra" id="rating-photos-extra">
+                <summary>＋ 添加照片<span>可选，最多 4 张</span></summary>
+                <div class="stack rating-extra-body">
             <div>
                 <label class="avatar-picker-control">
                     <input type="file" id="rating-photo" accept="image/jpeg,image/png,image/webp" multiple aria-describedby="rating-photo-hint">
@@ -426,6 +435,8 @@
             <label id="rating-remove-photo-field" hidden>
                 <input type="checkbox" id="rating-remove-photo"> 移除全部原有照片
             </label>
+                </div>
+            </details>
             <label id="rating-anonymous-field" hidden>
                 <input type="checkbox" id="rating-anonymous"> 匿名评价（这条评价不会显示在个人主页）
             </label>
@@ -595,6 +606,6 @@
         </div>
     </div>
 </div>
-<script src="app.js?v=campus-groups" defer></script>
+<script src="app.js?v=quick-review" defer></script>
 </body>
 </html>

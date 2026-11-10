@@ -1868,7 +1868,11 @@ textarea {
     font-weight: 500;
 }
 
-.detail-score-row .btn {
+.detail-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
     margin-left: auto;
 }
 
@@ -2502,8 +2506,9 @@ button.comment-avatar { cursor: pointer; }
         padding-top: 34px;
     }
 
-    .detail-score-row .btn {
+    .detail-actions {
         margin-left: 0;
+        flex-basis: 100%;
     }
 
     .field-row {
@@ -2854,8 +2859,8 @@ button.comment-avatar { cursor: pointer; }
 
 @media (max-width: 960px) {
     .directory-campus {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        display: flex;
+        flex-wrap: wrap;
         gap: 8px;
         flex: 1 0 100%;
         min-width: 0;
@@ -2864,7 +2869,7 @@ button.comment-avatar { cursor: pointer; }
     }
     .directory-campus + .directory-campus { margin-top: 6px; }
     #category-nav .campus-directory-heading {
-        grid-column: 1 / -1;
+        flex: 0 0 100%;
         justify-content: flex-start;
         width: 100%;
         margin: 0;
@@ -2876,11 +2881,12 @@ button.comment-avatar { cursor: pointer; }
     #category-nav .campus-directory-heading .cat-count { margin-left: 4px; }
     #category-nav .campus-directory-heading.is-active { color: var(--primary); }
     .directory-campus .dining-directory-group > .category-btn {
-        width: 100%;
+        width: auto;
         min-width: 0;
-        justify-content: space-between;
+        justify-content: flex-start;
+        gap: 10px;
     }
-    .directory-campus .dining-floor-links { grid-column: 1 / -1; }
+    .directory-campus .dining-floor-links { flex: 0 0 100%; }
 }
 
 /* Keep navigation readable before switching to the mobile bottom bar. */
@@ -2908,3 +2914,11 @@ button.comment-avatar { cursor: pointer; }
     .brand-text strong { font-size: 14px; }
     .nav-link { padding: 10px 4px; font-size: 11px; }
 }
+
+.rating-target-summary { display: flex; flex-direction: column; gap: 5px; padding: 14px 16px; border-radius: 12px; background: var(--primary-soft); }
+.rating-target-summary strong { color: var(--primary); font-size: 17px; }
+.rating-target-summary span { color: var(--muted); font-size: 12px; }
+.rating-extra { border: 1px solid var(--line); border-radius: 12px; padding: 0 14px; }
+.rating-extra > summary { cursor: pointer; padding: 13px 0; color: var(--primary); font-weight: 700; }
+.rating-extra > summary span { display: block; margin: 4px 0 0 16px; font-size: 12px; font-weight: 400; color: var(--muted); }
+.rating-extra-body { padding-bottom: 14px; }

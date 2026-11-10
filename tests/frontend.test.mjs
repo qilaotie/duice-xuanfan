@@ -67,6 +67,11 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
     await scenario('UI-02 guest review, dish and withdrawal', async page => {
         await page.locator('#canteen-grid [data-action="open-detail"][data-id="1"]').click();
         await page.locator('#detail-content [data-action="open-rating"]').click();
+        assert.equal(await page.locator('#rating-location-fields').isVisible(), false);
+        assert.equal(await page.locator('#rating-target-summary').isVisible(), true);
+        assert.equal(await page.locator('#rating-dishes-extra').getAttribute('open'), null);
+        assert.equal(await page.locator('#rating-photos-extra').getAttribute('open'), null);
+        await page.locator('#rating-dishes-extra > summary').click();
         await page.locator('#rating-add-new-dish').click();
         await page.locator('.dish-name-input').fill('测试凉面');
         await page.locator('.dish-score-input').selectOption('4');
@@ -175,6 +180,7 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await page.locator('#canteen-grid [data-id="1"][data-action="open-detail"]').click();
         await page.locator('#detail-content [data-action="open-rating"]').click();
         const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jO9sAAAAASUVORK5CYII=', 'base64');
+        await page.locator('#rating-photos-extra > summary').click();
         await page.locator('#rating-photo').setInputFiles([
             { name: 'one.png', mimeType: 'image/png', buffer: png },
             { name: 'two.png', mimeType: 'image/png', buffer: png }

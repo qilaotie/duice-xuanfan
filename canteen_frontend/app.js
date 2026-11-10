@@ -1589,8 +1589,10 @@
                         <div class="stars">${starsHtml(data.score)}</div>
                         <div class="detail-meta">综合评分</div>
                     </div>
-                    <button type="button" class="btn btn-light btn-sm" data-action="open-rating" data-id="${Number(data.id)}">写评价</button>
-                    <button type="button" class="btn btn-ghost-light btn-sm" data-action="copy-content-link">复制链接</button>
+                    <div class="detail-actions">
+                        <button type="button" class="btn btn-light btn-sm" data-action="open-rating" data-id="${Number(data.id)}">写评价</button>
+                        <button type="button" class="btn btn-ghost-light btn-sm" data-action="copy-content-link">复制链接</button>
+                    </div>
                 </div>
             </div>
             <div class="detail-body">
@@ -1875,7 +1877,20 @@
         $('#rating-submit').textContent = review ? '保存修改' : '提交评价';
         const category = $('#rating-category');
         const canteen = $('#rating-canteen');
-        category.disabled = canteen.disabled = Boolean(review);
+        category.disabled = canteen.disabled = Boolean(id);
+        $('#rating-location-fields').hidden = Boolean(id);
+        const targetSummary = $('#rating-target-summary');
+        targetSummary.hidden = !id;
+        targetSummary.replaceChildren();
+        if (id) {
+            const name = document.createElement('strong');
+            name.textContent = selected?.name || reviewDetail?.name || '当前档口';
+            const location = document.createElement('span');
+            location.textContent = getCategories().find(item => item.id === categoryId)?.name || reviewDetail?.category_name || '';
+            targetSummary.append(name, location);
+        }
+        $('#rating-dishes-extra').open = Boolean(review?.dish_scores?.length);
+        $('#rating-photos-extra').open = Boolean(reviewPhotoUrls(review).length);
         if (review) {
             category.replaceChildren(new Option(detail.category_name || '未分类', detail.category_id));
             canteen.replaceChildren(new Option(detail.name, id));
