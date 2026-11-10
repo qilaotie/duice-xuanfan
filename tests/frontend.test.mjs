@@ -215,6 +215,10 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         }
     });
     await scenario('DINING-01 parent filters, floors, east district exception and URL restore', async page => {
+        await page.locator('[data-dining-campus="南校区"]').click();
+        assert.equal(await page.locator('#canteen-grid .stall-row').count(), 4);
+        await page.locator('[data-dining-campus="北校区"]').click();
+        assert.equal(await page.locator('#canteen-grid .stall-row').count(), 2);
         await page.locator('[data-dining-group="竹园"]').click();
         await page.waitForURL(/group=/);
         assert.equal(await page.locator('#canteen-grid .stall-row').count(), 3);
@@ -230,6 +234,18 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await page.locator('#canteen-grid [data-id="7"][data-action="open-detail"]').click();
         await page.locator('#detail-content [data-action="open-rating"]').click();
         assert.equal(await page.locator('#rating-category option[value="14"]').textContent(), '东区 · 二楼 · 西军电餐厅');
+    });
+    await scenario('CAMPUS-01 building directory and floor filters', async page => {
+        await page.locator('[data-nav="campus"]').click();
+        await page.locator('[data-campus-building="老综合楼"]').click();
+        assert.equal(await page.locator('#campus-food-count').textContent(), '1 家');
+        await page.reload();
+        await page.locator('#campus-food-directory').getByRole('button', { name: /老综合楼/ }).waitFor();
+        assert.match(page.url(), /building=/);
+        await page.locator('[data-campus-location="100002"]').click();
+        assert.equal(await page.locator('#campus-food-count').textContent(), '0 家');
+        await page.locator('[data-campus-building="家属区（综合楼）"]').click();
+        assert.equal(await page.locator('#campus-food-count').textContent(), '0 家');
     });
     const summary = coverage.getCoverageSummary().toJSON();
     await mkdir('test-results', { recursive: true });

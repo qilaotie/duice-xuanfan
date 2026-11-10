@@ -14,6 +14,7 @@
         rankingMode: 'all',
         categoryFilter: null,
         diningGroupFilter: '',
+        diningCampusFilter: '',
         search: '',
         ratedOnly: false,
         sort: 'number',
@@ -106,11 +107,13 @@
         if (state.view === 'stalls') {
             if (state.categoryFilter !== null) query.set('location', state.categoryFilter);
             if (state.diningGroupFilter) query.set('group', state.diningGroupFilter);
+            if (state.diningCampusFilter) query.set('campus', state.diningCampusFilter);
             if (state.search) query.set('q', state.search);
             if (state.ratedOnly) query.set('rated', '1');
             if (state.sort !== 'number') query.set('sort', state.sort);
         } else if (state.view === 'campus') {
             if (campusLocationFilter) query.set('location', campusLocationFilter);
+            if (campusBuildingFilter) query.set('building', campusBuildingFilter);
             if ($('#campus-food-search').value) query.set('q', $('#campus-food-search').value);
         } else if (state.view === 'forum' && $('#forum-kind-filter').value) {
             query.set('kind', $('#forum-kind-filter').value);
@@ -189,12 +192,14 @@
         const location = Number(listUrl.searchParams.get('location'));
         state.categoryFilter = location > 0 && Number.isSafeInteger(location) ? location : null;
         state.diningGroupFilter = listUrl.searchParams.get('group') || '';
+        state.diningCampusFilter = listUrl.searchParams.get('campus') || '';
         state.search = listUrl.searchParams.get('q') || '';
         state.ratedOnly = listUrl.searchParams.get('rated') === '1';
         state.sort = ['number', 'score', 'reviews', 'name'].includes(listUrl.searchParams.get('sort')) ? listUrl.searchParams.get('sort') : 'number';
         state.expandedCategories = new Set(snapshot?.expanded || []);
         $('#search-input').value = state.search;
         campusLocationFilter = listUrl.searchParams.get('location') || '';
+        campusBuildingFilter = listUrl.searchParams.get('building') || '';
         $('#campus-food-search').value = view === 'campus' ? listUrl.searchParams.get('q') || '' : '';
         $('#forum-kind-filter').value = ['recommend', 'avoid'].includes(listUrl.searchParams.get('kind')) ? listUrl.searchParams.get('kind') : '';
         showView(view);
@@ -761,10 +766,19 @@
 
         const groups = diningGroups();
         if (!groups.some(group => group.name === state.diningGroupFilter)) state.diningGroupFilter = '';
+        if (!groups.some(group => group.campus === state.diningCampusFilter)) state.diningCampusFilter = '';
+        const campuses = [...new Set(groups.map(group => group.campus))];
         nav.classList.add('dining-directory');
-        nav.innerHTML = `<button type="button" class="category-btn${state.categoryFilter === null && !state.diningGroupFilter ? ' is-active' : ''}" data-category="all">
+        nav.innerHTML = `<button type="button" class="category-btn${state.categoryFilter === null && !state.diningGroupFilter && !state.diningCampusFilter ? ' is-active' : ''}" data-category="all">
             <span class="cat-name">全部档口</span><span class="cat-count">${stalls.length}</span>
-        </button>` + groups.map((group, index) => {
+        </button>` + campuses.map(campus => {
+            const campusGroups = groups.filter(group => group.campus === campus);
+            const campusTotal = campusGroups.reduce((sum, group) => sum + group.floors.reduce((count, floor) => count + (counts.get(String(floor.id)) || 0), 0), 0);
+            return `<div class="directory-campus">
+                <button type="button" class="category-btn campus-directory-heading${state.diningCampusFilter === campus ? ' is-active' : ''}" data-dining-campus="${escapeHtml(campus)}">
+                    <span class="cat-name">${escapeHtml(campus)}</span><span class="cat-count">${campusTotal}</span>
+                </button>
+                ${campusGroups.map((group, index) => {
             const total = group.floors.reduce((sum, floor) => sum + (counts.get(String(floor.id)) || 0), 0);
             return `<div class="dining-directory-group">
                 <button type="button" class="category-btn${state.diningGroupFilter === group.name ? ' is-active' : ''}" data-dining-group="${escapeHtml(group.name)}">
@@ -774,6 +788,8 @@
                 <div class="dining-floor-links">${group.floors.map(floor => `<button type="button" class="category-btn${state.categoryFilter === floor.id ? ' is-active' : ''}" data-category="${floor.id}">
                     <span class="cat-name">${escapeHtml(floor.label)}</span><span class="cat-count">${counts.get(String(floor.id)) || 0}</span>
                 </button>`).join('')}</div>
+            </div>`;
+                }).join('')}
             </div>`;
         }).join('');
     }
@@ -785,7 +801,9 @@
             const special = category.id === 14;
             const name = special ? '东区' : match ? match[1] : category.name;
             const label = special ? '二楼 · ' + category.name : match ? match[2] + '楼' : category.name;
-            if (!groups.has(name)) groups.set(name, { name, floors: [] });
+            const campus = [1,2,3,4,5,6,7,8].includes(category.id) || ['海棠','丁香','竹园'].includes(name)
+                ? '南校区' : [11,12,13,14].includes(category.id) || ['东区','西区'].includes(name) ? '北校区' : '其他';
+            if (!groups.has(name)) groups.set(name, { name, campus, floors: [] });
             groups.get(name).floors.push({ ...category, label });
         }
         return Array.from(groups.values());
@@ -796,6 +814,11 @@
     }
 
     let campusLocationFilter = '';
+    let campusBuildingFilter = '';
+
+    function campusBuildingName(location) {
+        return ['老综合楼', '新综合楼', '丁香综合楼'][Math.floor((location.id - 100001) / 2)] || location.name;
+    }
 
     function renderCampusFood() {
         const list = $('#campus-food-list');
@@ -806,26 +829,43 @@
         }
         const keyword = $('#campus-food-search').value.trim().toLowerCase();
         if (!buildings.some(location => String(location.id) === campusLocationFilter)) campusLocationFilter = '';
+        if (!buildings.some(location => campusBuildingName(location) === campusBuildingFilter)) campusBuildingFilter = '';
         const entriesByLocation = new Map(buildings.map(location => [location.id, []]));
         for (const stall of state.canteens) entriesByLocation.get(stall.category_id)?.push(stall);
         const total = Array.from(entriesByLocation.values()).reduce((sum, entries) => sum + entries.length, 0);
-        const directory = [{ id: '', name: '全部地点', count: total }, ...buildings.map(location =>
-            ({ ...location, count: entriesByLocation.get(location.id).length }))];
-        $('#campus-food-directory').innerHTML = directory.map((location, index) => {
+        const directory = buildings.map(location => ({ ...location, count: entriesByLocation.get(location.id).length }));
+        const directoryGroups = [...new Set(buildings.map(campusBuildingName))];
+        const renderFloor = (location, index) => {
             const selected = String(location.id) === campusLocationFilter;
             return `<button type="button" class="category-btn${selected ? ' is-active' : ''}"
                 data-campus-location="${escapeHtml(location.id)}" aria-pressed="${selected}">
                 <span class="cat-dot" style="background:${index ? CATEGORY_DOTS[(index - 1) % CATEGORY_DOTS.length] : '#0f766e'}"></span>
                 <span class="cat-name">${escapeHtml(location.name)}</span><span class="cat-count">${location.count}</span>
             </button>`;
-        }).join('');
+        };
+        const directoryNode = $('#campus-food-directory');
+        directoryNode.classList.add('dining-directory');
+        directoryNode.innerHTML = `<button type="button" class="category-btn${!campusLocationFilter && !campusBuildingFilter ? ' is-active' : ''}"
+            data-campus-location="" aria-pressed="${!campusLocationFilter && !campusBuildingFilter}">
+            <span class="cat-name">全部地点</span><span class="cat-count">${total}</span></button>` +
+            directoryGroups.map(name => {
+                const locations = directory.filter(location => campusBuildingName(location) === name);
+                const selected = campusBuildingFilter === name;
+                return `<div class="dining-directory-group">
+                    <button type="button" class="category-btn${selected ? ' is-active' : ''}" data-campus-building="${escapeHtml(name)}" aria-pressed="${selected}">
+                        <span class="cat-name">${escapeHtml(name)}</span><span class="cat-count">${locations.reduce((sum, location) => sum + location.count, 0)}</span>
+                    </button>
+                    ${locations.length > 1 ? `<div class="dining-floor-links">${locations.map((location, index) =>
+                        renderFloor({ ...location, name: location.name.startsWith(name) ? location.name.slice(name.length) : location.name }, index)).join('')}</div>` : ''}
+                </div>`;
+            }).join('');
 
         const grouped = new Map();
-        const buildingNames = ['老综合楼', '新综合楼', '丁香综合楼'];
         let resultCount = 0;
         for (const location of buildings) {
             if (campusLocationFilter && String(location.id) !== campusLocationFilter) continue;
-            const name = buildingNames[Math.floor((location.id - 100001) / 2)] || location.name;
+            const name = campusBuildingName(location);
+            if (campusBuildingFilter && campusBuildingFilter !== name) continue;
             const entries = entriesByLocation.get(location.id).filter(stall =>
                 `${stall.name} ${location.name} ${name}`.toLowerCase().includes(keyword));
             if (keyword && !entries.length) continue;
@@ -856,6 +896,7 @@
     function setCategoryFilter(value) {
         state.categoryFilter = value === 'all' ? null : Number(value);
         state.diningGroupFilter = '';
+        state.diningCampusFilter = '';
         renderCategoryNav();
         renderCanteenGrid();
     }
@@ -877,7 +918,9 @@
         const keyword = state.search.toLowerCase();
         const selectedGroup = diningGroups().find(group => group.name === state.diningGroupFilter);
         const selectedFloors = selectedGroup ? new Set(selectedGroup.floors.map(floor => floor.id)) : null;
+        const campusFloors = state.diningCampusFilter ? new Set(diningGroups().filter(group => group.campus === state.diningCampusFilter).flatMap(group => group.floors.map(floor => floor.id))) : null;
         return diningStalls().filter(canteen => {
+            if (campusFloors && !campusFloors.has(canteen.category_id)) return false;
             if (selectedFloors && !selectedFloors.has(canteen.category_id)) return false;
             if (state.categoryFilter !== null && String(canteen.category_id) !== String(state.categoryFilter)) {
                 return false;
@@ -1060,9 +1103,12 @@
         if (single) grid.innerHTML = blocks.map(block => block.html).join('');
         else {
             const parents = diningGroups();
-            grid.innerHTML = parents.map(parent => {
+            grid.innerHTML = [...new Set(parents.map(parent => parent.campus))].map(campus => {
+                const sections = parents.filter(parent => parent.campus === campus).map(parent => {
                 const floors = blocks.filter(block => parent.floors.some(floor => floor.id === block.group.id));
                 return floors.length ? `<section class="dining-result-group stack"><h2>${escapeHtml(parent.name)}</h2>${floors.map(floor => floor.html).join('')}</section>` : '';
+                }).join('');
+                return sections ? `<section class="campus-result-section stack"><h2 class="campus-result-title">${escapeHtml(campus)}</h2>${sections}</section>` : '';
             }).join('');
             const ungrouped = blocks.filter(block => !parents.some(parent => parent.floors.some(floor => floor.id === block.group.id)));
             grid.insertAdjacentHTML('beforeend', ungrouped.map(block => block.html).join(''));
@@ -1076,7 +1122,7 @@
 
         const single = state.categoryFilter !== null;
         if (!single) {
-            title.textContent = state.diningGroupFilter ? state.diningGroupFilter + ' · 全部楼层' : '全部档口';
+            title.textContent = state.diningGroupFilter ? state.diningGroupFilter + ' · 全部楼层' : state.diningCampusFilter ? state.diningCampusFilter + ' · 全部食堂' : '全部档口';
         } else {
             const category = getCategories().find(item => String(item.id) === String(state.categoryFilter));
             title.textContent = category ? category.name : '全部档口';
@@ -1133,6 +1179,7 @@
         state.search = '';
         state.categoryFilter = null;
         state.diningGroupFilter = '';
+        state.diningCampusFilter = '';
         state.ratedOnly = false;
         state.expandedCategories.clear();
         const input = $('#search-input');
@@ -2980,9 +3027,17 @@
         $('#forum-reply-form').addEventListener('submit', submitForumReply);
         $('#campus-food-search').addEventListener('input', renderCampusFood);
         $('#campus-food-directory').addEventListener('click', event => {
+            const building = event.target.closest('[data-campus-building]');
+            if (building) {
+                campusLocationFilter = '';
+                campusBuildingFilter = building.dataset.campusBuilding;
+                renderCampusFood();
+                return;
+            }
             const button = event.target.closest('[data-campus-location]');
             if (!button) return;
             campusLocationFilter = button.dataset.campusLocation;
+            campusBuildingFilter = '';
             renderCampusFood();
             $('#campus-food-directory [aria-pressed="true"]')?.focus({ preventScroll: true });
         });
@@ -3123,10 +3178,20 @@
             return;
         }
 
+        const campus = event.target.closest('[data-dining-campus]');
+        if (campus) {
+            state.categoryFilter = null;
+            state.diningGroupFilter = '';
+            state.diningCampusFilter = campus.dataset.diningCampus;
+            renderCategoryNav();
+            renderCanteenGrid();
+            return;
+        }
         const diningGroup = event.target.closest('[data-dining-group]');
         if (diningGroup) {
             state.categoryFilter = null;
             state.diningGroupFilter = diningGroup.dataset.diningGroup;
+            state.diningCampusFilter = '';
             renderCategoryNav();
             renderCanteenGrid();
             return;
