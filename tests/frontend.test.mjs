@@ -53,6 +53,30 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
             }
         });
     }
+    await scenario('TIME-01 UTC dates display in Beijing time across browser timezones', async page => {
+        await page.route('**/api/canteens/1', async route => {
+            const response = await route.fetch();
+            const data = await response.json();
+            data.comments = [
+                { id: 9001, username: '时间测试', content: 'UTC时间', score: 4, created_at: '2026-11-10 14:03' },
+                { id: 9002, username: '时间测试', content: '跨日时间', score: 4, created_at: '2026-11-10T18:03:00Z' },
+                { id: 9003, username: '时间测试', content: '已有时区', score: 4, created_at: '2026-11-10T22:03:00+08:00' }
+            ];
+            data.history = [{date: '2026-11-10 14:03', avg_score: 4, rating_count: 3}];
+            await route.fulfill({response, json: data});
+        });
+        const session = await page.context().newCDPSession(page);
+        for (const timezoneId of ['UTC', 'America/Los_Angeles', 'Asia/Shanghai']) {
+            await session.send('Emulation.setTimezoneOverride', {timezoneId});
+            await page.locator('#canteen-grid [data-action="open-detail"][data-id="1"]').click();
+            await waitFor(page, '.comment-time');
+            assert.deepEqual(await page.locator('.comment-time').allTextContents(), [
+                '2026-11-10 22:03', '2026-11-11 02:03', '2026-11-10 22:03'
+            ]);
+            assert.match(await page.locator('.chart-wrap').innerText(), /2026-11-10 22:03/);
+            await page.locator('#detail-modal .detail-close').click();
+        }
+    });
     await scenario('UI-01 campus search and empty results', async page => {
         await page.locator('[data-nav="campus"]').click();
         await waitFor(page, '#campus-food-list [data-id="2"]');

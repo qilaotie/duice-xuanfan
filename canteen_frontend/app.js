@@ -62,6 +62,21 @@
     };
 
     const numberFormat = new Intl.NumberFormat('zh-CN');
+    const beijingTimeFormat = new Intl.DateTimeFormat('zh-CN', {
+        timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+    });
+
+    function formatTime(value) {
+        if (!value) return '';
+        // Both backends store UTC; legacy responses omit the timezone suffix.
+        let iso = String(value).trim().replace(' ', 'T');
+        if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso)) iso += 'Z';
+        const date = new Date(iso);
+        if (Number.isNaN(date.getTime())) return String(value);
+        const parts = Object.fromEntries(beijingTimeFormat.formatToParts(date).map(part => [part.type, part.value]));
+        return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+    }
 
     document.addEventListener('DOMContentLoaded', init);
 
@@ -649,7 +664,7 @@
                 ${profile.reviews.length ? profile.reviews.map(review => `
                     <article class="detail-panel">
                         <button type="button" class="link-btn" data-action="profile-review-stall" data-id="${Number(review.canteen_id)}">${escapeHtml(review.canteen_name)}</button>
-                        <p class="muted">${escapeHtml(review.created_at)} · ${escapeHtml(review.score)} 分</p>
+                        <p class="muted">${escapeHtml(formatTime(review.created_at))} · ${escapeHtml(review.score)} 分</p>
                         <p class="comment-text">${escapeHtml(review.content || '（无文字评价）')}</p>
                         ${review.dish_name ? `<p class="comment-text">${escapeHtml(review.dish_name)}</p>` : ''}
                         ${review.dish_scores.map(dish => `<p class="comment-text">${escapeHtml(dish.name)} · ${escapeHtml(dish.score)} 分</p>`).join('')}
@@ -1341,7 +1356,7 @@
             <p class="muted">${escapeHtml(post.address)}</p>
             <p class="comment-text">${escapeHtml(post.content)}</p>
             <div class="panel-head">
-                <span class="muted">${escapeHtml(post.author)} · ${escapeHtml(post.created_at.slice(0, 16))}</span>
+                <span class="muted">${escapeHtml(post.author)} · ${escapeHtml(formatTime(post.created_at))}</span>
                 <button type="button" class="btn btn-soft btn-sm" data-action="forum-open" data-id="${Number(post.id)}">查看帖子 · ${formatNumber(post.reply_count)} 条回复</button>
             </div>
         </article>`).join('');
@@ -1403,12 +1418,12 @@
                 <h3>${forumBadge(post.kind)} ${escapeHtml(post.name)}</h3>
                 <p>地址：${escapeHtml(post.address)}</p>
                 <p class="comment-text">${escapeHtml(post.content)}</p>
-                <p class="muted">1 楼 · ${escapeHtml(post.author)} · ${escapeHtml(post.created_at.slice(0, 16))}</p>
+                <p class="muted">1 楼 · ${escapeHtml(post.author)} · ${escapeHtml(formatTime(post.created_at))}</p>
                 <div><button type="button" class="btn btn-soft btn-sm" data-action="copy-content-link">复制帖子链接</button></div>
                 ${post.can_delete ? `<div><button type="button" class="link-btn" data-action="forum-delete" data-id="${Number(post.id)}">删除帖子</button></div>` : ''}
             </article>`;
             const html = rows.map(reply => `<article class="detail-panel">
-                <p class="muted">${formatNumber(reply.floor)} 楼 · ${escapeHtml(reply.author)} · ${escapeHtml(reply.created_at.slice(0, 16))}</p>
+                <p class="muted">${formatNumber(reply.floor)} 楼 · ${escapeHtml(reply.author)} · ${escapeHtml(formatTime(reply.created_at))}</p>
                 <p class="comment-text">${escapeHtml(reply.content)}</p>
             </article>`).join('');
             if (append && replyCursor) replies.insertAdjacentHTML('beforeend', html);
@@ -1555,7 +1570,7 @@
                             ${comment.author_id
                                 ? `<button type="button" class="link-btn comment-user" data-action="open-public-profile" data-id="${Number(comment.author_id)}">${escapeHtml(comment.user)}</button>`
                                 : `<span class="comment-user">${escapeHtml(comment.user || '匿名用户')}</span>`}
-                            <span class="comment-time">${escapeHtml(comment.created_at)}</span>
+                            <span class="comment-time">${escapeHtml(formatTime(comment.created_at))}</span>
                             <span class="stars stars-sm">${starsHtml(comment.score)}</span>
                         </div>
                         ${(comment.dish_scores || []).map(dish => `<p class="comment-text">${escapeHtml(dish.name)} · ${escapeHtml(dish.score)} 分</p>`).join('')}
@@ -1790,14 +1805,14 @@
                 const avg = item.avg_score === null || item.avg_score === undefined
                     ? '暂无评分'
                     : `${formatScore(item.avg_score)} 分`;
-                return `${escapeHtml(item.date)}（${escapeHtml(avg)} / ${formatNumber(item.rating_count)} 条）`;
+                return `${escapeHtml(formatTime(item.date))}（${escapeHtml(avg)} / ${formatNumber(item.rating_count)} 条）`;
             });
             canvas.parentElement.innerHTML = `<p class="muted" style="font-size:12.5px;line-height:2">${lines.join('<br>')}</p>`;
             return;
         }
 
         destroyChart();
-        const labels = history.map(item => item.date);
+        const labels = history.map(item => formatTime(item.date));
         const values = history.map(item => item.avg_score === null ? null : Number(item.avg_score));
 
         window.currentHistoryChart = new Chart(canvas.getContext('2d'), {
@@ -1926,7 +1941,7 @@
             list.innerHTML = reviews.length ? reviews.map(review => `
                 <article class="detail-panel">
                     <strong>${escapeHtml(review.canteen_name)}</strong>
-                    <p class="muted">${escapeHtml(review.category_name || '未分类')} · ${escapeHtml(review.created_at)} · ${escapeHtml(review.score)} 分</p>
+                    <p class="muted">${escapeHtml(review.category_name || '未分类')} · ${escapeHtml(formatTime(review.created_at))} · ${escapeHtml(review.score)} 分</p>
                     <p class="comment-text">${escapeHtml(review.content || '（无文字评价）')}</p>
                     <div class="comment-actions">
                         <button type="button" class="link-btn" data-action="edit-my-review" data-id="${Number(review.id)}" data-canteen-id="${Number(review.canteen_id)}">修改</button>
@@ -2434,7 +2449,7 @@
             list.innerHTML = rows.length ? rows.map(row => `
                 <article class="detail-panel stack" data-feedback-id="${Number(row.id)}">
                     <strong>${row.kind === 'stall' ? (isCampus(row) ? '校内美食推荐 · ' : '档口推荐 · ') + escapeHtml(row.name) : '问题反馈'}</strong>
-                    <p class="muted">${escapeHtml(row.created_at)} · ${{pending:'待处理',approved:'已入库',closed:'已处理'}[row.status]}</p>
+                    <p class="muted">${escapeHtml(formatTime(row.created_at))} · ${{pending:'待处理',approved:'已入库',closed:'已处理'}[row.status]}</p>
                     <p class="comment-text">${escapeHtml(row.content || '（无补充说明）')}</p>
                     ${row.has_photo ? `<div><button type="button" class="btn btn-soft btn-sm" data-action="feedback-photo" data-id="${Number(row.id)}">查看提交照片</button></div>` : ''}
                     ${row.status === 'pending' && row.kind === 'stall' ? `<form class="inline-form" data-feedback-approve>
@@ -2580,7 +2595,7 @@
                 <div class="admin-row-main">
                     <strong>${escapeHtml(rating.user)} · ${escapeHtml(rating.canteen_name || '未知档口')}</strong>
                     <p>
-                        ${escapeHtml(rating.created_at)}
+                        ${escapeHtml(formatTime(rating.created_at))}
                         ${rating.is_deleted ? '<span class="badge badge-red">已删除</span>' : '<span class="badge badge-amber">' + escapeHtml(rating.score) + ' 分</span>'}
                     </p>
                     <p class="admin-comment">${escapeHtml(rating.comment || '（无文字评价）')}</p>
@@ -2615,7 +2630,7 @@
             return `<div class="admin-row">
                 <div class="admin-row-main">
                     <strong>举报 #${escapeHtml(report.report_id)} · ${escapeHtml(report.reporter || '匿名')}</strong>
-                    <p>${escapeHtml(report.reported_at)}</p>
+                    <p>${escapeHtml(formatTime(report.reported_at))}</p>
                     <p class="admin-comment">理由：${escapeHtml(report.reason)}</p>
                     <p>被举报评价：${escapeHtml(rating.user || '未知')} / ${escapeHtml(rating.canteen_name || '未知档口')} / ${escapeHtml(formatScore(rating.score))} 分</p>
                     <p class="admin-comment">${escapeHtml(rating.comment || '（评价已删除或无文字内容）')}</p>
@@ -2644,7 +2659,7 @@
             return `<div class="admin-row">
                 <div class="admin-row-main">
                     <strong>${escapeHtml(label)}</strong>
-                    <p>管理员：${escapeHtml(action.admin_user || '未知')} · ${escapeHtml(action.created_at)}</p>
+                    <p>管理员：${escapeHtml(action.admin_user || '未知')} · ${escapeHtml(formatTime(action.created_at))}</p>
                     <p>${escapeHtml(type)} #${escapeHtml(targetId)}</p>
                     <p class="admin-comment">${escapeHtml(action.details || '')}</p>
                 </div>
