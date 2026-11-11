@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=custom-review-labels">
+    <link rel="stylesheet" href="styles.css?v=review-controls">
 </head>
 <body>
 <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -277,14 +277,14 @@
                         <button type="button" class="chip" data-rating-filter="active">有效</button>
                         <button type="button" class="chip" data-rating-filter="deleted">已删除</button>
                     </div>
-                    <details class="detail-panel admin-review-labels">
-                        <summary>评价标签管理</summary>
+                    <section class="detail-panel admin-review-labels">
+                        <h3>评价标签管理</h3>
                         <form class="inline-form" id="admin-add-review-label">
                             <input name="label" aria-label="新标签名称" placeholder="输入新标签名称" maxlength="20" required>
                             <button type="submit" class="btn btn-primary">新建标签</button>
                         </form>
                         <div class="stack" id="admin-review-label-list"></div>
-                    </details>
+                    </section>
                     <div class="admin-list" id="admin-rating-list"></div>
                 </section>
 
@@ -614,6 +614,6 @@
         </div>
     </div>
 </div>
-<script src="app.js?v=custom-review-labels" defer></script>
+<script src="app.js?v=review-controls" defer></script>
 </body>
 </html>

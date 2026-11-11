@@ -59,7 +59,7 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
             const response = await route.fetch();
             const data = await response.json();
             data.comments = [
-                { id: 9001, username: '时间测试', content: 'UTC时间', score: 4, created_at: '2026-11-10 14:03' },
+                { id: 9001, username: '时间测试', content: 'UTC时间', score: 4, created_at: '2026-11-10 14:03', likes: 5, dislikes: 1, moderation_label: '反串' },
                 { id: 9002, username: '时间测试', content: '跨日时间', score: 4, created_at: '2026-11-10T18:03:00Z' },
                 { id: 9003, username: '时间测试', content: '已有时区', score: 4, created_at: '2026-11-10T22:03:00+08:00' }
             ];
@@ -72,8 +72,15 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
             await page.locator('#canteen-grid [data-action="open-detail"][data-id="1"]').click();
             await waitFor(page, '.comment-time');
             assert.deepEqual(await page.locator('.comment-time').allTextContents(), [
-                '2026-11-10 22:03', '2026-11-11 02:03', '2026-11-10 22:03'
+                '2026-11-11 02:03', '2026-11-10 22:03', '2026-11-10 22:03'
             ]);
+            const reviews = page.locator('#detail-review-list .comment-item');
+            await page.locator('#detail-review-sort').selectOption('oldest');
+            assert.equal(await reviews.first().getAttribute('data-review-id'), '9001');
+            await page.locator('#detail-review-sort').selectOption('hot');
+            assert.equal(await reviews.first().getAttribute('data-review-id'), '9001');
+            await page.locator('#detail-review-filter').selectOption('label:反串');
+            assert.equal(await reviews.count(), 1);
             assert.match(await page.locator('.chart-wrap').innerText(), /2026-11-10 22:03/);
             await page.locator('#detail-modal .detail-close').click();
         }
@@ -186,19 +193,24 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await page.locator('#detail-modal .detail-close').click();
         await page.locator('[data-nav="admin"]').click();
         await page.locator('[data-admin-tab="ratings"]').click();
-        await page.getByText('评价标签管理', {exact: true}).click();
         const addLabel = page.locator('#admin-add-review-label');
         await addLabel.locator('input').fill('待核实');
         await addLabel.getByRole('button').click();
+        await page.locator('#admin-review-label-list [data-review-label-name="待核实"]').waitFor();
+        await page.locator('button[data-nav="stalls"]').click();
+        await page.locator('#canteen-grid [data-action="open-detail"][data-id="1"]').click();
+        await page.locator('#detail-review-list').getByLabel('评价标签').selectOption('待核实');
+        await page.locator('#detail-review-list .badge').getByText('待核实', {exact: true}).waitFor();
+        await page.locator('#detail-modal .detail-close').click();
+        await page.locator('[data-nav="admin"]').click();
         const rating = page.locator('#admin-rating-list .admin-row').filter({hasText: '标签测试评价'});
-        await rating.getByLabel('评价标签').selectOption('待核实');
         await rating.getByText('待核实', {exact: true}).first().waitFor();
-        const label = page.locator('#admin-review-label-list details').filter({hasText: '待核实'});
+        const label = page.locator('#admin-review-label-list [data-review-label-name]').filter({hasText: '待核实'});
         await label.locator('summary').click();
         await label.locator('input').fill('情况待确认');
         await label.getByRole('button', {name: '保存名称'}).click();
-        const renamed = page.locator('#admin-review-label-list details').filter({hasText: '情况待确认'});
-        await renamed.locator('summary').click();
+        const renamed = page.locator('#admin-review-label-list [data-review-label-name]').filter({hasText: '情况待确认'});
+        await renamed.waitFor();
         assert.equal(await rating.getByLabel('评价标签').inputValue(), '情况待确认');
         page.once('dialog', dialog => dialog.accept());
         await renamed.getByRole('button', {name: '删除标签'}).click();

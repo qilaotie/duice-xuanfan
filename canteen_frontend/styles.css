@@ -1420,6 +1420,10 @@ a {
 .admin-review-labels form { margin: 10px 0; }
 .admin-review-label { padding: 8px 0; border-top: 1px solid var(--line); }
 
+.review-filters { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-bottom: 10px; }
+.review-filters label { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.review-filters select, .comment-actions select { width: auto; max-width: 100%; }
+
 .review-votes {
     display: inline-flex;
     flex-wrap: wrap;
@@ -2102,6 +2106,8 @@ button.comment-avatar { cursor: pointer; }
 
 .comment-actions {
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 12px;
 }
 

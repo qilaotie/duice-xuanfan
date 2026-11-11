@@ -69,12 +69,16 @@
         hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
     });
 
-    function formatTime(value) {
-        if (!value) return '';
+    function parseApiTime(value) {
         // Both backends store UTC; legacy responses omit the timezone suffix.
         let iso = String(value).trim().replace(' ', 'T');
         if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso)) iso += 'Z';
-        const date = new Date(iso);
+        return new Date(iso);
+    }
+
+    function formatTime(value) {
+        if (!value) return '';
+        const date = parseApiTime(value);
         if (Number.isNaN(date.getTime())) return String(value);
         const parts = Object.fromEntries(beijingTimeFormat.formatToParts(date).map(part => [part.type, part.value]));
         return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
@@ -1523,9 +1527,12 @@
         content.innerHTML = detailSkeleton();
 
         try {
-            const data = await api(`/api/canteens/${canteenId}`);
+            const [data, reviewLabels] = await Promise.all([
+                api(`/api/canteens/${canteenId}`),
+                state.isAdmin ? api('/api/admin/review-labels').catch(() => null) : null
+            ]);
             if (state.detailId !== canteenId) return;
-            renderDetail(data);
+            renderDetail(data, reviewLabels);
         } catch (error) {
             if (state.detailId !== canteenId) return;
             content.innerHTML = `<div class="detail-body">
@@ -1552,7 +1559,7 @@
         </div>`;
     }
 
-    function renderDetail(data) {
+    function renderDetail(data, reviewLabels = null) {
         const content = $('#detail-content');
         if (!content) return;
         state.detailData = data;
@@ -1560,40 +1567,6 @@
         const comments = Array.isArray(data.comments) ? data.comments : [];
         const history = Array.isArray(data.history) ? data.history : [];
         const scoreText = formatScore(data.score);
-
-        const commentsHtml = comments.length
-            ? comments.map(comment => `
-                <article class="comment-item">
-                    ${comment.author_id
-                        ? `<button type="button" class="comment-avatar" data-action="open-public-profile" data-id="${Number(comment.author_id)}" aria-label="查看${escapeHtml(comment.user)}的个人资料">${avatarContent(comment.avatar_url, comment.user)}</button>`
-                        : `<div class="comment-avatar">${avatarContent(null, comment.user)}</div>`}
-                    <div class="comment-main">
-                        <div class="comment-head">
-                            ${comment.author_id
-                                ? `<button type="button" class="link-btn comment-user" data-action="open-public-profile" data-id="${Number(comment.author_id)}">${escapeHtml(comment.user)}</button>`
-                                : `<span class="comment-user">${escapeHtml(comment.user || '匿名用户')}</span>`}
-                            <span class="comment-time">${escapeHtml(formatTime(comment.created_at))}</span>
-                            <span class="stars stars-sm">${starsHtml(comment.score)}</span>
-                            ${comment.moderation_label ? `<span class="badge badge-amber" title="管理员标记">${escapeHtml(comment.moderation_label)}</span>` : ''}
-                        </div>
-                        ${(comment.dish_scores || []).map(dish => `<p class="comment-text">${escapeHtml(dish.name)} · ${escapeHtml(dish.score)} 分</p>`).join('')}
-                        ${comment.dish_name ? `<p class="comment-text"><strong>菜品：</strong>${escapeHtml(comment.dish_name)}</p>` : ''}
-                        <p class="comment-text">${escapeHtml(comment.content || '（无文字评价）')}</p>
-                        ${renderReviewPhotos(comment)}
-                        <div class="comment-actions">
-                            ${Number.isInteger(comment.my_vote) ? `<div class="review-votes" role="group" aria-label="评价投票">
-                                <button type="button" class="btn btn-ghost btn-sm" data-action="review-vote" data-id="${Number(comment.id)}" data-vote="1" aria-pressed="${comment.my_vote === 1}">点赞 <span>${formatNumber(comment.likes)}</span></button>
-                                <button type="button" class="btn btn-ghost btn-sm" data-action="review-vote" data-id="${Number(comment.id)}" data-vote="-1" aria-pressed="${comment.my_vote === -1}">踩 <span>${formatNumber(comment.dislikes)}</span></button>
-                            </div>` : ''}
-                            ${comment.is_mine ? `
-                                <button type="button" class="link-btn" data-action="edit-review" data-id="${Number(comment.id)}">修改</button>
-                                <button type="button" class="link-btn" data-action="withdraw-review" data-id="${Number(comment.id)}">撤回</button>
-                            ` : `<button type="button" class="link-btn" data-action="report" data-id="${Number(comment.id)}">举报</button>`}
-                        </div>
-                    </div>
-                </article>
-            `).join('')
-            : emptyState('还没有评论', '来写下第一条评价吧。', '💬');
 
         content.innerHTML = `
             <div class="detail-hero">
@@ -1640,14 +1613,94 @@
                         <h3>同学们怎么说</h3>
                         <span class="muted">${formatNumber(comments.length)} 条</span>
                     </div>
-                    ${commentsHtml}
+                    ${comments.length ? `<div class="review-filters">
+                        <label>排序 <select id="detail-review-sort">
+                            <option value="newest">最新</option><option value="oldest">最早</option><option value="hot">热度（赞 − 踩）</option>
+                        </select></label>
+                        <label>标签 <select id="detail-review-filter"></select></label>
+                    </div><div id="detail-review-list"></div>` : emptyState('还没有评论', '来写下第一条评价吧。', '💬')}
                 </section>
             </div>
         `;
 
+        if (comments.length) {
+            const sort = $('#detail-review-sort');
+            const filter = $('#detail-review-filter');
+            const list = $('#detail-review-list');
+            const render = () => {
+                const selected = filter.value;
+                const labels = [...new Set(comments.map(comment => comment.moderation_label).filter(Boolean))];
+                filter.replaceChildren(new Option('全部', 'all'), new Option('无标签', 'untagged'),
+                    ...labels.map(label => new Option(label, 'label:' + label)));
+                if (Array.from(filter.options).some(option => option.value === selected)) filter.value = selected;
+                list.innerHTML = renderDetailReviews(comments, sort.value, filter.value, reviewLabels);
+            };
+            sort.addEventListener('change', render);
+            filter.addEventListener('change', render);
+            list.addEventListener('change', event => {
+                const select = event.target.closest('[data-review-label-id]');
+                if (select) setReviewLabel(comments.find(comment => comment.id === Number(select.dataset.reviewLabelId)), select, render);
+            });
+            render();
+        }
+
         if (history.length) {
             renderHistoryChart(history);
         }
+    }
+
+    function renderDetailReviews(reviews, sort, filter, reviewLabels) {
+        const comments = reviews.filter(comment => filter === 'all' ||
+            (filter === 'untagged' ? !comment.moderation_label : filter === 'label:' + comment.moderation_label));
+        const newest = (a, b) => parseApiTime(b.created_at) - parseApiTime(a.created_at) || b.id - a.id;
+        const heat = review => (review.likes || 0) - (review.dislikes || 0);
+        comments.sort((a, b) => {
+            if (sort === 'oldest') return newest(b, a);
+            if (sort === 'hot') return heat(b) - heat(a) || newest(a, b);
+            return newest(a, b);
+        });
+        return comments.length
+            ? comments.map(comment => `
+                <article class="comment-item" data-review-id="${Number(comment.id)}">
+                    ${comment.author_id
+                        ? `<button type="button" class="comment-avatar" data-action="open-public-profile" data-id="${Number(comment.author_id)}" aria-label="查看${escapeHtml(comment.user)}的个人资料">${avatarContent(comment.avatar_url, comment.user)}</button>`
+                        : `<div class="comment-avatar">${avatarContent(null, comment.user)}</div>`}
+                    <div class="comment-main">
+                        <div class="comment-head">
+                            ${comment.author_id
+                                ? `<button type="button" class="link-btn comment-user" data-action="open-public-profile" data-id="${Number(comment.author_id)}">${escapeHtml(comment.user)}</button>`
+                                : `<span class="comment-user">${escapeHtml(comment.user || '匿名用户')}</span>`}
+                            <span class="comment-time">${escapeHtml(formatTime(comment.created_at))}</span>
+                            <span class="stars stars-sm">${starsHtml(comment.score)}</span>
+                            ${comment.moderation_label ? `<span class="badge badge-amber" title="管理员标记">${escapeHtml(comment.moderation_label)}</span>` : ''}
+                        </div>
+                        ${(comment.dish_scores || []).map(dish => `<p class="comment-text">${escapeHtml(dish.name)} · ${escapeHtml(dish.score)} 分</p>`).join('')}
+                        ${comment.dish_name ? `<p class="comment-text"><strong>菜品：</strong>${escapeHtml(comment.dish_name)}</p>` : ''}
+                        <p class="comment-text">${escapeHtml(comment.content || '（无文字评价）')}</p>
+                        ${renderReviewPhotos(comment)}
+                        <div class="comment-actions">
+                            ${Number.isInteger(comment.my_vote) ? `<div class="review-votes" role="group" aria-label="评价投票">
+                                <button type="button" class="btn btn-ghost btn-sm" data-action="review-vote" data-id="${Number(comment.id)}" data-vote="1" aria-pressed="${comment.my_vote === 1}" aria-label="点赞" title="点赞">👍 <span>${formatNumber(comment.likes)}</span></button>
+                                <button type="button" class="btn btn-ghost btn-sm" data-action="review-vote" data-id="${Number(comment.id)}" data-vote="-1" aria-pressed="${comment.my_vote === -1}" aria-label="踩" title="踩">👎 <span>${formatNumber(comment.dislikes)}</span></button>
+                            </div>` : ''}
+                            ${state.isAdmin && reviewLabels ? reviewLabelSelect(comment, reviewLabels) : ''}
+                            ${comment.is_mine ? `
+                                <button type="button" class="link-btn" data-action="edit-review" data-id="${Number(comment.id)}">修改</button>
+                                <button type="button" class="link-btn" data-action="withdraw-review" data-id="${Number(comment.id)}">撤回</button>
+                            ` : `<button type="button" class="link-btn" data-action="report" data-id="${Number(comment.id)}">举报</button>`}
+                        </div>
+                    </div>
+                </article>
+            `).join('')
+            : emptyState('没有符合条件的评价', '试试切换标签筛选。', '💬');
+
+    }
+
+    function reviewLabelSelect(review, labels) {
+        return `<select aria-label="评价标签" data-review-label-id="${Number(review.id)}">
+            <option value="">无标签</option>
+            ${labels.map(({name}) => `<option value="${escapeHtml(name)}"${name === review.moderation_label ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('')}
+        </select>`;
     }
 
     function renderStallManagement(stall) {
@@ -2616,10 +2669,7 @@
                     <p class="admin-comment">${escapeHtml(rating.comment || '（无文字评价）')}</p>
                 </div>
                 <div class="admin-row-actions">
-                    ${!rating.is_deleted ? `<select aria-label="评价标签" data-review-label-id="${Number(rating.id)}">
-                        <option value="">无标签</option>
-                        ${state.admin.reviewLabels.map(({name}) => `<option value="${escapeHtml(name)}"${name === rating.moderation_label ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('')}
-                    </select>` : ''}
+                    ${!rating.is_deleted ? reviewLabelSelect(rating, state.admin.reviewLabels) : ''}
                     ${rating.is_deleted
                         ? `<button type="button" class="btn btn-soft btn-sm" data-action="admin-restore-rating" data-id="${rating.id}">恢复</button>`
                         : `<button type="button" class="btn btn-danger btn-sm" data-action="admin-delete-rating" data-id="${rating.id}">删除</button>`}
@@ -2629,12 +2679,20 @@
     }
 
     async function voteOnReview(id, button) {
+        const list = button.closest('#detail-review-list');
+        const review = state.detailData?.comments?.find(item => item.id === id);
         const buttons = $$('button', button.closest('.review-votes'));
         const vote = button.getAttribute('aria-pressed') === 'true' ? 0 : Number(button.dataset.vote);
         buttons.forEach(item => { item.disabled = true; });
         try {
             await ensurePostingIdentity();
             const result = await api(`/api/ratings/${id}/vote`, { method: 'PUT', body: { vote } });
+            if (review) Object.assign(review, result);
+            const sort = list?.isConnected && $('#detail-review-sort');
+            if (sort && (sort.value === 'hot' || !button.isConnected)) {
+                sort.dispatchEvent(new Event('change'));
+                return;
+            }
             for (const item of buttons) {
                 const like = item.dataset.vote === '1';
                 item.setAttribute('aria-pressed', String(result.my_vote === Number(item.dataset.vote)));
@@ -2649,14 +2707,19 @@
 
     function renderReviewLabels() {
         $('#admin-review-label-list').innerHTML = state.admin.reviewLabels.map(({name}) => `
-            <details class="admin-review-label">
-                <summary>${escapeHtml(name)}</summary>
-                <form class="inline-form" data-review-label-name="${escapeHtml(name)}">
-                    <input name="label" aria-label="标签名称" maxlength="20" required value="${escapeHtml(name)}">
-                    <button type="submit" class="btn btn-soft">保存名称</button>
-                    <button type="button" class="btn btn-danger" data-action="delete-review-label">删除标签</button>
-                </form>
-            </details>`).join('') || '<p class="muted">暂无标签</p>';
+            <div class="admin-review-label" data-review-label-name="${escapeHtml(name)}">
+                <div class="panel-head">
+                    <strong>${escapeHtml(name)}</strong>
+                    <button type="button" class="btn btn-danger btn-sm" data-action="delete-review-label">删除标签</button>
+                </div>
+                <details>
+                    <summary>改名</summary>
+                    <form class="inline-form">
+                        <input name="label" aria-label="标签名称" maxlength="20" required value="${escapeHtml(name)}">
+                        <button type="submit" class="btn btn-soft">保存名称</button>
+                    </form>
+                </details>
+            </div>`).join('') || '<p class="muted">暂无标签</p>';
     }
 
     async function saveReviewLabelCatalog(method, button, body) {
@@ -2673,16 +2736,15 @@
         }
     }
 
-    async function setReviewLabel(id, select) {
-        const rating = state.admin.ratings.find(item => Number(item.id) === id);
+    async function setReviewLabel(rating, select, render) {
         if (!rating) return;
         select.disabled = true;
         try {
-            const result = await api(`/api/admin/ratings/${id}/label`, {
+            const result = await api(`/api/admin/ratings/${rating.id}/label`, {
                 method: 'PUT', body: { label: select.value || null }
             });
             rating.moderation_label = result.moderation_label;
-            renderAdminRatings();
+            if (state.isAdmin) render();
             toast(result.moderation_label ? '已添加标签' : '已移除标签');
         } catch (error) {
             select.value = rating.moderation_label || '';
@@ -3167,12 +3229,12 @@
         $('#admin-review-label-list').addEventListener('submit', event => {
             event.preventDefault();
             saveReviewLabelCatalog('PATCH', event.submitter, {
-                name: event.target.dataset.reviewLabelName, new_name: event.target.elements.label.value
+                name: event.target.closest('[data-review-label-name]').dataset.reviewLabelName, new_name: event.target.elements.label.value
             });
         });
         $('#admin-rating-list').addEventListener('change', event => {
             const select = event.target.closest('[data-review-label-id]');
-            if (select) setReviewLabel(Number(select.dataset.reviewLabelId), select);
+            if (select) setReviewLabel(state.admin.ratings.find(item => Number(item.id) === Number(select.dataset.reviewLabelId)), select, renderAdminRatings);
         });
         $('#admin-feedback-list').addEventListener('submit', event => {
             const form = event.target.closest('[data-feedback-approve]');
@@ -3468,7 +3530,7 @@
                 if (id) voteOnReview(id, element);
                 break;
             case 'delete-review-label': {
-                const name = element.form.dataset.reviewLabelName;
+                const name = element.closest('[data-review-label-name]').dataset.reviewLabelName;
                 if (state.isAdmin && window.confirm(`删除「${name}」？使用该标签的评价会移除此标签。`)) {
                     saveReviewLabelCatalog('DELETE', element, {name});
                 }
