@@ -7,7 +7,7 @@ from flask import Flask, request, jsonify, send_file, send_from_directory, url_f
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from datetime import datetime
-from sqlalchemy import func, text
+from sqlalchemy import func, inspect, text
 from sqlalchemy.orm import deferred, column_property
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.sqlite import insert
@@ -143,8 +143,58 @@ class Rating(db.Model):
     dish_name = db.Column(db.String(80))
     is_anonymous = db.Column(db.Boolean, nullable=False, default=False)
     dish_scores = db.Column(db.JSON)
+    moderation_label = db.Column(db.Text)
     is_deleted = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class ReviewLabel(db.Model):
+    __tablename__ = "review_labels"
+    __table_args__ = (db.CheckConstraint("length(name) BETWEEN 1 AND 20"),)
+    name = db.Column(db.Text, primary_key=True)
+
+
+class ReviewVote(db.Model):
+    __tablename__ = "review_votes"
+    __table_args__ = (db.CheckConstraint("vote IN (-1, 1)"),)
+    rating_id = db.Column(db.Integer, db.ForeignKey("ratings.id", ondelete="CASCADE"), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    vote = db.Column(db.Integer, nullable=False)
+
+
+def review_vote_counts(canteen_id, viewer):
+    rows = db.session.execute(text("""
+        SELECT v.rating_id, SUM(v.vote=1) likes, SUM(v.vote=-1) dislikes,
+               SUM(CASE WHEN v.user_id=:user THEN v.vote ELSE 0 END) my_vote
+        FROM review_votes v JOIN ratings r ON r.id=v.rating_id
+        WHERE r.canteen_id=:canteen AND r.is_deleted=0 GROUP BY v.rating_id
+    """), {"canteen": canteen_id, "user": viewer.id if viewer else None}).mappings()
+    return {row["rating_id"]: {key: row[key] for key in ("likes", "dislikes", "my_vote")} for row in rows}
+
+
+@app.put("/api/ratings/<int:rating_id>/vote")
+def vote_on_rating(rating_id):
+    viewer = get_current_user()
+    if not viewer:
+        return jsonify({"msg": "请先登录"}), 401
+    data = request.get_json(silent=True)
+    vote = data.get("vote") if isinstance(data, dict) else None
+    if type(vote) is not int or vote not in (-1, 0, 1):
+        return jsonify({"msg": "无效的投票"}), 400
+    if vote:
+        db.session.execute(text("""INSERT INTO review_votes (rating_id,user_id,vote)
+            SELECT id,:user,:vote FROM ratings WHERE id=:id AND is_deleted=0
+            ON CONFLICT(rating_id,user_id) DO UPDATE SET vote=excluded.vote"""),
+            {"user": viewer.id, "vote": vote, "id": rating_id})
+    else:
+        ReviewVote.query.filter_by(rating_id=rating_id, user_id=viewer.id).delete()
+    rating = Rating.query.filter_by(id=rating_id, is_deleted=False).first()
+    if not rating:
+        db.session.rollback()
+        return jsonify({"msg": "评价不存在"}), 404
+    counts = review_vote_counts(rating.canteen_id, viewer).get(rating_id)
+    db.session.commit()
+    return jsonify(counts or {"likes": 0, "dislikes": 0, "my_vote": 0})
 
 
 class ReviewPhoto(db.Model):
@@ -523,6 +573,7 @@ def get_canteen_detail(canteen_id):
     for rating_id, photo_id in photo_ids:
         photos_by_rating.setdefault(rating_id, []).append(url_for("get_review_photo", photo_id=photo_id))
     scores_by_dish = {}
+    votes = review_vote_counts(c.id, viewer)
     for r in ratings:
         for dish in r.dish_scores or []:
             scores_by_dish.setdefault(dish["id"], []).append(dish["score"])
@@ -534,6 +585,8 @@ def get_canteen_detail(canteen_id):
         comments.append({
             "id": r.id,
             "is_mine": viewer is not None and viewer.id == r.user_id,
+            "moderation_label": r.moderation_label,
+            **votes.get(r.id, {"likes": 0, "dislikes": 0, "my_vote": 0}),
             "user": "匿名同学" if anonymous else user.nickname or "同学",
             "author_id": None if anonymous else user.id,
             "avatar_url": url_for("get_avatar", user_id=user.id) if not anonymous and user.has_avatar else None,
@@ -837,6 +890,7 @@ def create_rating(rating_id=None):
             canteen_id = rating.canteen_id
             Report.query.filter_by(comment_id=rating.id).delete()
             ReviewPhoto.query.filter_by(rating_id=rating.id).delete()
+            ReviewVote.query.filter_by(rating_id=rating.id).delete()
             db.session.delete(rating)
             db.session.commit()
             record_canteen_history(canteen_id)
@@ -1140,9 +1194,74 @@ def admin_get_ratings():
             "is_deleted": bool(r.is_deleted),
             "score": r.score,
             "comment": r.comment,
+            "moderation_label": r.moderation_label,
             "created_at": r.created_at.strftime("%Y-%m-%d %H:%M")
         })
     return jsonify(result)
+
+
+def review_label_name(value):
+    if not isinstance(value, str) or not 1 <= len(value.strip()) <= 20:
+        raise ValueError("标签名称须为 1 至 20 个字符")
+    return value.strip()
+
+
+@app.route("/api/admin/review-labels", methods=["GET", "POST", "PATCH", "DELETE"])
+def admin_review_labels():
+    _, resp, code = require_admin()
+    if resp:
+        return resp, code
+    if request.method == "GET":
+        return jsonify([{"name": label.name} for label in ReviewLabel.query.order_by(ReviewLabel.name)])
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"msg": "请求格式无效"}), 400
+    try:
+        name = review_label_name(data.get("name"))
+        replacement = review_label_name(data.get("new_name")) if request.method == "PATCH" else None
+    except ValueError as error:
+        return jsonify({"msg": str(error)}), 400
+    try:
+        if request.method == "POST":
+            db.session.add(ReviewLabel(name=name))
+        else:
+            entry = ReviewLabel.query.filter_by(name=name)
+            changed = (entry.update({"name": replacement}, synchronize_session=False)
+                       if replacement is not None else entry.delete(synchronize_session=False))
+            if not changed:
+                db.session.rollback()
+                return jsonify({"msg": "标签不存在"}), 404
+            Rating.query.filter_by(moderation_label=name).update({"moderation_label": replacement})
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"msg": "标签名称已存在"}), 409
+    return jsonify({"msg": "操作成功"})
+
+
+@app.put("/api/admin/ratings/<int:rating_id>/label")
+def admin_label_rating(rating_id):
+    user, resp, code = require_admin()
+    if resp:
+        return resp, code
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or "label" not in data:
+        return jsonify({"msg": "无效的评价标签"}), 400
+    try:
+        label = None if data["label"] is None else review_label_name(data["label"])
+    except ValueError as error:
+        return jsonify({"msg": str(error)}), 400
+    rating = Rating.query.filter_by(id=rating_id, is_deleted=False)
+    if label is not None:
+        rating = rating.filter(ReviewLabel.query.filter_by(name=label).exists())
+    if not rating.update({"moderation_label": label}, synchronize_session=False):
+        db.session.rollback()
+        if label is not None and db.session.get(ReviewLabel, label) is None:
+            return jsonify({"msg": "标签不存在"}), 400
+        return jsonify({"msg": "评价不存在"}), 404
+    log_admin_action(user, "set_rating_label" if label else "remove_rating_label", "rating", rating_id, details=label)
+    db.session.commit()
+    return jsonify({"moderation_label": label})
 
 
 # 管理员：删除评分/评论（同时删除相关举报）
@@ -1337,6 +1456,7 @@ def admin_delete_canteen(canteen_id):
     if rating_ids:
         Report.query.filter(Report.comment_id.in_(rating_ids)).delete(synchronize_session=False)
         ReviewPhoto.query.filter(ReviewPhoto.rating_id.in_(rating_ids)).delete(synchronize_session=False)
+        ReviewVote.query.filter(ReviewVote.rating_id.in_(rating_ids)).delete(synchronize_session=False)
         Rating.query.filter(Rating.id.in_(rating_ids)).delete(synchronize_session=False)
     RatingHistory.query.filter_by(canteen_id=canteen_id).delete(synchronize_session=False)
     Dish.query.filter_by(canteen_id=canteen_id).delete(synchronize_session=False)
@@ -1441,6 +1561,9 @@ def ensure_db_schema():
         db.session.commit()
         res = db.session.execute(text("PRAGMA table_info(ratings)")).fetchall()
         cols = [row[1] for row in res] if res else []
+        if 'moderation_label' not in cols:
+            db.session.execute(text("ALTER TABLE ratings ADD COLUMN moderation_label TEXT"))
+            db.session.commit()
         if 'is_anonymous' not in cols:
             db.session.execute(text("ALTER TABLE ratings ADD COLUMN is_anonymous BOOLEAN NOT NULL DEFAULT 0"))
         if 'is_deleted' not in cols:
@@ -1532,8 +1655,13 @@ def ensure_db_schema():
 def init_database():
     """建表、迁移旧库、初始化管理员，并补齐历史快照。"""
     with app.app_context():
+        new_label_catalog = not inspect(db.engine).has_table("review_labels")
         db.create_all()
         ensure_db_schema()
+        if new_label_catalog:
+            db.session.execute(text("INSERT OR IGNORE INTO review_labels (name) VALUES ('反串')"))
+            db.session.execute(text("""INSERT OR IGNORE INTO review_labels (name)
+                SELECT DISTINCT moderation_label FROM ratings WHERE moderation_label IS NOT NULL"""))
         campus_locations = [building + floor for building in ("老综合楼", "新综合楼", "丁香综合楼") for floor in ("一楼", "二楼")]
         campus_locations.append("家属区（综合楼）")
         for category_id, name in enumerate(campus_locations, 100001):

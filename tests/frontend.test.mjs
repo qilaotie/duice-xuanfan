@@ -30,6 +30,7 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
             });
             try {
                 await page.route('https://cdn.jsdelivr.net/**', route => route.abort());
+                await page.route(/^https:\/\/fonts\.(googleapis|gstatic)\.com\//, route => route.abort());
                 await page.coverage.startJSCoverage({ resetOnNavigation: false });
                 await page.goto('http://127.0.0.1:' + port);
                 await waitFor(page, '#canteen-grid [data-action="open-detail"]');
@@ -102,6 +103,15 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await page.locator('#rating-comment').fill('不错');
         await page.locator('#rating-submit').click();
         await page.locator('#detail-content').getByText('不错', { exact: true }).waitFor();
+        const like = page.locator('#detail-content [data-action="review-vote"][data-vote="1"]');
+        const dislike = page.locator('#detail-content [data-action="review-vote"][data-vote="-1"]');
+        await like.click();
+        await page.locator('[data-vote="1"][aria-pressed="true"]').waitFor();
+        await dislike.click();
+        await page.locator('[data-vote="-1"][aria-pressed="true"]').waitFor();
+        assert.equal(await like.getAttribute('aria-pressed'), 'false');
+        await dislike.click();
+        await page.locator('[data-vote="-1"][aria-pressed="false"]').waitFor();
         await page.locator('#detail-content [data-action="edit-review"]').click();
         await page.locator('#rating-comment').fill('更新后的评价');
         await page.locator('#rating-submit').click();
@@ -150,6 +160,50 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await page.getByText('反馈已提交，感谢！').waitFor();
         await page.locator('[data-nav="admin"]').click();
         await page.locator('#admin-feedback-list').getByText('浏览器测试反馈').waitFor();
+        await page.locator('button[data-nav="stalls"]').click();
+        await page.locator('[data-action="feedback-stall"]').click();
+        await page.locator('#feedback-form input[name="name"]').fill('测试忽略档口');
+        await page.locator('#feedback-form select[name="building"]').selectOption('other');
+        await page.locator('#feedback-form input[name="customLocation"]').fill('测试地点');
+        const photo = await page.evaluate(() => document.createElement('canvas').toDataURL('image/jpeg').split(',')[1]);
+        await page.locator('#feedback-form input[name="photo"]').setInputFiles({
+            name: 'stall.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(photo, 'base64')
+        });
+        await page.locator('#feedback-form button[type=submit]').click();
+        await page.locator('#feedback-modal').waitFor({state: 'hidden'});
+        await page.locator('[data-nav="admin"]').click();
+        const suggestion = page.locator('[data-feedback-id]').filter({hasText: '测试忽略档口'});
+        await suggestion.getByRole('button', {name: '忽略', exact: true}).click();
+        await suggestion.waitFor({state: 'hidden'});
+        await page.locator('#feedback-status').selectOption('processed');
+        await suggestion.getByText('已忽略').waitFor();
+        await page.locator('button[data-nav="stalls"]').click();
+        await page.locator('#canteen-grid [data-action="open-detail"][data-id="1"]').click();
+        await page.locator('#detail-content [data-action="open-rating"]').click();
+        await page.locator('#rating-comment').fill('标签测试评价');
+        await page.locator('#rating-submit').click();
+        await page.locator('#detail-content').getByText('标签测试评价', {exact: true}).waitFor();
+        await page.locator('#detail-modal .detail-close').click();
+        await page.locator('[data-nav="admin"]').click();
+        await page.locator('[data-admin-tab="ratings"]').click();
+        await page.getByText('评价标签管理', {exact: true}).click();
+        const addLabel = page.locator('#admin-add-review-label');
+        await addLabel.locator('input').fill('待核实');
+        await addLabel.getByRole('button').click();
+        const rating = page.locator('#admin-rating-list .admin-row').filter({hasText: '标签测试评价'});
+        await rating.getByLabel('评价标签').selectOption('待核实');
+        await rating.getByText('待核实', {exact: true}).first().waitFor();
+        const label = page.locator('#admin-review-label-list details').filter({hasText: '待核实'});
+        await label.locator('summary').click();
+        await label.locator('input').fill('情况待确认');
+        await label.getByRole('button', {name: '保存名称'}).click();
+        const renamed = page.locator('#admin-review-label-list details').filter({hasText: '情况待确认'});
+        await renamed.locator('summary').click();
+        assert.equal(await rating.getByLabel('评价标签').inputValue(), '情况待确认');
+        page.once('dialog', dialog => dialog.accept());
+        await renamed.getByRole('button', {name: '删除标签'}).click();
+        await renamed.waitFor({state: 'detached'});
+        assert.equal(await rating.getByLabel('评价标签').inputValue(), '');
     });
     await scenario('ROUTE-01 detail refresh, return filters and browser history', async page => {
         await page.locator('#search-input').fill('测试面馆');

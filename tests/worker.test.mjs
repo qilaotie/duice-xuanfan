@@ -117,6 +117,33 @@ test('REV-01 catalog, rating, dish scores, photos and withdrawal', async t => {
     assert.equal(review.is_mine, true);
     assert.equal(review.photo_urls.length, 2);
     assert.equal(result.dishes[0].score, 4);
+    const votePath = `/api/ratings/${review.id}/vote`;
+    await api(votePath, 401, {method: 'PUT', data: {vote: 1}});
+    await api(votePath, 400, {method: 'PUT', token: other, data: {vote: 2}});
+    for (const [vote, likes, dislikes] of [[1, 1, 0], [1, 1, 0], [-1, 0, 1], [0, 0, 0]]) {
+        assert.deepEqual(await api(votePath, 200, {method: 'PUT', token: other, data: {vote}}),
+            {likes, dislikes, my_vote: vote});
+    }
+    const labelPath = `/api/admin/ratings/${review.id}/label`;
+    await api(labelPath, 403, {method: 'PUT', token: other, data: {label: '反串'}});
+    await api(labelPath, 400, {method: 'PUT', token: admin, data: {label: '其他'}});
+    await api(labelPath, 200, {method: 'PUT', token: admin, data: {label: '反串'}});
+    assert.equal((await api('/api/canteens/1', 200)).comments[0].moderation_label, '反串');
+    await api(labelPath, 200, {method: 'PUT', token: admin, data: {label: null}});
+    assert.equal((await api('/api/canteens/1', 200)).comments[0].moderation_label, null);
+    const catalog = '/api/admin/review-labels';
+    const manage = (method, status, data) => api(catalog, status, {method, token: admin, data});
+    await manage('POST', 200, {name: ' 待核实 '});
+    await manage('POST', 409, {name: '待核实'});
+    await api(labelPath, 200, {method: 'PUT', token: admin, data: {label: '待核实'}});
+    await manage('PATCH', 409, {name: '待核实', new_name: '反串'});
+    assert.equal((await api('/api/canteens/1', 200)).comments[0].moderation_label, '待核实');
+    await manage('PATCH', 200, {name: '待核实', new_name: '情况待确认'});
+    assert.equal((await api('/api/canteens/1', 200)).comments[0].moderation_label, '情况待确认');
+    await manage('DELETE', 200, {name: '情况待确认'});
+    await manage('DELETE', 404, {name: '情况待确认'});
+    assert.equal((await api('/api/canteens/1', 200)).comments[0].moderation_label, null);
+    assert.deepEqual(await manage('GET', 200), [{name: '反串'}]);
     await api(review.photo_urls[0], 200);
     await api('/api/users/2', 200);
     await api('/api/users/999', 404);
@@ -126,6 +153,7 @@ test('REV-01 catalog, rating, dish scores, photos and withdrawal', async t => {
     await api('/api/ratings/' + review.id, 200, { method: 'PATCH', token: member, data: { ...rating, is_anonymous: true } });
     assert.equal((await api('/api/users/2', 200)).reviews.length, 0);
     await api('/api/ratings/' + review.id, 200, { method: 'DELETE', token: member });
+    await api(votePath, 404, {method: 'PUT', token: other, data: {vote: 1}});
     await api(review.photo_urls[0], 404);
 });
 

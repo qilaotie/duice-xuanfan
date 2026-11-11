@@ -1409,6 +1409,29 @@ a {
     height: 42px;
 }
 
+.feedback-review-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.admin-review-labels { margin: 12px 0; }
+.admin-review-labels summary { cursor: pointer; font-weight: 700; }
+.admin-review-labels form { margin: 10px 0; }
+.admin-review-label { padding: 8px 0; border-top: 1px solid var(--line); }
+
+.review-votes {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.review-votes [aria-pressed="true"] {
+    background: var(--primary-soft);
+    color: var(--primary);
+    border-color: var(--primary);
+}
+
 .admin-list {
     display: flex;
     flex-direction: column;

@@ -181,10 +181,13 @@ async function route(request, env) {
             q('SELECT id,name,photo IS NOT NULL has_photo FROM dishes WHERE canteen_id=? ORDER BY name', id),
             q(`SELECT r.id,r.user_id,u.nickname,u.username GLOB '__guest_*' is_guest,
                 u.avatar IS NOT NULL has_avatar,r.is_anonymous,r.score,r.comment,r.created_at,r.dish_name,r.dish_scores,
-                r.photo IS NOT NULL has_photo,
+                r.photo IS NOT NULL has_photo,r.moderation_label,
+                (SELECT COUNT(*) FROM review_votes WHERE rating_id=r.id AND vote=1) likes,
+                (SELECT COUNT(*) FROM review_votes WHERE rating_id=r.id AND vote=-1) dislikes,
+                (SELECT vote FROM review_votes WHERE rating_id=r.id AND user_id=?) my_vote,
                 (SELECT json_group_array(id) FROM (SELECT id FROM review_photos WHERE rating_id=r.id ORDER BY id)) photo_ids
                 FROM ratings r JOIN users u ON u.id=r.user_id
-                WHERE r.canteen_id=? AND r.is_deleted=0 ORDER BY r.created_at DESC,r.id DESC`, id),
+                WHERE r.canteen_id=? AND r.is_deleted=0 ORDER BY r.created_at DESC,r.id DESC`, viewer?.id ?? null, id),
             q('SELECT created_at,avg_score,rating_count FROM rating_history WHERE canteen_id=? ORDER BY created_at', id)
         ].slice(0, match[2] ? 2 : 4));
         const stall = stallResult.results[0];
@@ -205,6 +208,7 @@ async function route(request, env) {
                 avatar_url: !anonymous && row.has_avatar ? `/api/avatars/${row.user_id}` : null,
                 author_id: anonymous ? null : row.user_id, is_anonymous: anonymous, is_mine: viewer?.id === row.user_id,
                 content: row.comment, score: row.score, created_at: minute(row.created_at), dish_name: row.dish_name,
+                moderation_label: row.moderation_label, likes: row.likes, dislikes: row.dislikes, my_vote: row.my_vote ?? 0,
                 dish_scores: dishScores, photo_url: photos[0] ?? null, photo_urls: photos };
         });
         const mean = values => values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) * 100 / values.length) / 100 : null;
@@ -232,6 +236,28 @@ async function route(request, env) {
         const row = await first(`SELECT photo FROM ${kind} WHERE id=?${kind === 'ratings' ? ' AND is_deleted=0' : ''}`, Number(id));
         if (!row?.photo) fail(404, '照片不存在');
         return new Response(new Uint8Array(row.photo), { headers: { 'Content-Type': 'image/jpeg', 'X-Content-Type-Options': 'nosniff' } });
+    }
+
+    const voteMatch = /^\/api\/ratings\/(\d+)\/vote$/.exec(path);
+    if (voteMatch && method === 'PUT') {
+        const user = auth();
+        const id = Number(voteMatch[1]);
+        const { vote } = await body(request);
+        if (![1, -1, 0].includes(vote)) fail(400, '无效的投票');
+        const write = vote === 0
+            ? q(`DELETE FROM review_votes WHERE user_id=? AND rating_id IN
+                (SELECT id FROM ratings WHERE id=? AND is_deleted=0)`, user.id, id)
+            : q(`INSERT INTO review_votes (rating_id,user_id,vote)
+                SELECT id,?,? FROM ratings WHERE id=? AND is_deleted=0
+                ON CONFLICT(rating_id,user_id) DO UPDATE SET vote=excluded.vote`, user.id, vote, id);
+        const [, result] = await batch([write, q(`SELECT
+            (SELECT COUNT(*) FROM review_votes WHERE rating_id=r.id AND vote=1) likes,
+            (SELECT COUNT(*) FROM review_votes WHERE rating_id=r.id AND vote=-1) dislikes,
+            COALESCE((SELECT vote FROM review_votes WHERE rating_id=r.id AND user_id=?),0) my_vote
+            FROM ratings r WHERE r.id=? AND r.is_deleted=0`, user.id, id)]);
+        const counts = result.results[0];
+        if (!counts) fail(404, '评价不存在');
+        return json(counts);
     }
 
     if (method === 'GET' && path === '/api/my/ratings') {

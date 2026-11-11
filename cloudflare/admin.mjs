@@ -4,12 +4,61 @@ export async function admin(ctx) {
         (admin_user_id,action,target_type,target_id,details,created_at) VALUES (?,?,?,?,?,?)`,
         viewer.id, name, type, id, name + ' by ' + viewer.username, now());
     const success = () => json({ msg: '操作成功' });
+    const labelName = value => {
+        const name = getText(value, 20, '标签名称');
+        if (!name) fail(400, '请输入标签名称');
+        return name;
+    };
+    if (path === '/api/admin/review-labels') {
+        if (method === 'GET') return json(await all('SELECT name FROM review_labels ORDER BY name'));
+        if (['POST', 'PATCH', 'DELETE'].includes(method)) {
+            const input = await body(request);
+            const name = labelName(input.name);
+            const replacement = method === 'PATCH' ? labelName(input.new_name) : null;
+            try {
+                if (method === 'POST') {
+                    await q('INSERT INTO review_labels (name) VALUES (?)', name).run();
+                } else {
+                    const [, result] = await batch([
+                        q(`UPDATE ratings SET moderation_label=? WHERE moderation_label=?
+                            AND EXISTS (SELECT 1 FROM review_labels WHERE name=?)`, replacement, name, name),
+                        method === 'PATCH'
+                            ? q('UPDATE review_labels SET name=? WHERE name=? RETURNING name', replacement, name)
+                            : q('DELETE FROM review_labels WHERE name=? RETURNING name', name)
+                    ]);
+                    if (!result.results.length) fail(404, '标签不存在');
+                }
+            } catch (error) {
+                if (String(error).includes('UNIQUE constraint failed: review_labels.name')) fail(409, '标签名称已存在');
+                throw error;
+            }
+            return success();
+        }
+    }
     if (method === 'GET' && path === '/api/admin/feedback') {
         const status = new URL(request.url).searchParams.get('status') === 'processed' ? '!=' : '=';
         return json(await all(`SELECT f.id,f.kind,f.name,f.content,f.status,f.canteen_id,f.created_at,
             f.photo IS NOT NULL has_photo,f.suggested_category_id,g.name suggested_category_name
             FROM feedback f LEFT JOIN categories g ON g.id=f.suggested_category_id
             WHERE f.status ${status} 'pending' ORDER BY f.id DESC LIMIT 100`));
+    }
+    const labelMatch = /^\/api\/admin\/ratings\/(\d+)\/label$/.exec(path);
+    if (labelMatch && method === 'PUT') {
+        const id = Number(labelMatch[1]);
+        const input = await body(request);
+        const label = input.label === null ? null : labelName(input.label);
+        const [result] = await batch([
+            q(`UPDATE ratings SET moderation_label=? WHERE id=? AND is_deleted=0
+                AND (? IS NULL OR EXISTS (SELECT 1 FROM review_labels WHERE name=?)) RETURNING id`, label, id, label, label),
+            q(`INSERT INTO admin_actions (admin_user_id,action,target_type,target_id,details,created_at)
+                SELECT ?,?,'rating',id,?,? FROM ratings WHERE id=? AND changes()=1`,
+                viewer.id, label ? 'set_rating_label' : 'remove_rating_label', label || '移除标签', now(), id)
+        ]);
+        if (!result.results.length) {
+            if (label !== null && !await first('SELECT name FROM review_labels WHERE name=?', label)) fail(400, '标签不存在');
+            fail(404, '评价不存在');
+        }
+        return json({ moderation_label: label });
     }
     const feedback = /^\/api\/admin\/feedback\/(\d+)(\/photo)?$/.exec(path);
     if (feedback && method === 'GET' && feedback[2]) {
@@ -91,7 +140,7 @@ export async function admin(ctx) {
         }
         if (path === '/api/admin/ratings') {
             const rows = await all(`SELECT r.id,r.user_id,u.username user,r.canteen_id,c.name canteen_name,
-                r.is_deleted,r.score,r.comment,substr(r.created_at,1,16) created_at
+                r.is_deleted,r.score,r.comment,r.moderation_label,substr(r.created_at,1,16) created_at
                 FROM ratings r JOIN users u ON u.id=r.user_id JOIN canteens c ON c.id=r.canteen_id ORDER BY r.created_at DESC`);
             return json(rows.map(row => ({ ...row, is_deleted: Boolean(row.is_deleted) })));
         }

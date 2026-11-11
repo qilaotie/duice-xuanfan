@@ -97,6 +97,33 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(review["is_mine"])
         self.assertEqual(len(review["photo_urls"]), 2)
         path = "/api/ratings/" + str(review["id"])
+        vote_path = path + "/vote"
+        self.api("PUT", vote_path, 401, data={"vote": 1})
+        self.api("PUT", vote_path, 400, token="other-token", data={"vote": True})
+        for vote, likes, dislikes in ((1, 1, 0), (-1, 0, 1), (0, 0, 0)):
+            result = self.api("PUT", vote_path, 200, token="other-token", data={"vote": vote})
+            self.assertEqual(result, {"likes": likes, "dislikes": dislikes, "my_vote": vote})
+        label_path = f"ratings/{review['id']}/label"
+        self.api("PUT", "/api/admin/" + label_path, 403, token=token, data={"label": "反串"})
+        self.admin("PUT", label_path, 400, data={"label": "其他"})
+        self.admin("PUT", "ratings/999/label", 404, data={"label": "反串"})
+        self.admin("PUT", label_path, 200, data={"label": "反串"})
+        public_review = self.api("GET", "/api/canteens/1", 200)["comments"][0]
+        self.assertEqual(public_review["moderation_label"], "反串")
+        self.admin("PUT", label_path, 200, data={"label": None})
+        self.api("GET", "/api/admin/review-labels", 403, token=token)
+        self.admin("POST", "review-labels", 400, data={"name": " "})
+        self.admin("POST", "review-labels", 200, data={"name": " 待核实 "})
+        self.admin("POST", "review-labels", 409, data={"name": "待核实"})
+        self.admin("PUT", label_path, 200, data={"label": "待核实"})
+        self.admin("PATCH", "review-labels", 409, data={"name": "待核实", "new_name": "反串"})
+        self.assertEqual(self.api("GET", "/api/canteens/1", 200)["comments"][0]["moderation_label"], "待核实")
+        self.admin("PATCH", "review-labels", 200, data={"name": "待核实", "new_name": "情况待确认"})
+        self.assertEqual(self.api("GET", "/api/canteens/1", 200)["comments"][0]["moderation_label"], "情况待确认")
+        self.admin("DELETE", "review-labels", 200, data={"name": "情况待确认"})
+        self.admin("DELETE", "review-labels", 404, data={"name": "情况待确认"})
+        self.assertIsNone(self.api("GET", "/api/canteens/1", 200)["comments"][0]["moderation_label"])
+        self.assertEqual(self.admin("GET", "review-labels", 200), [{"name": "反串"}])
         first, second = review["photo_urls"]
         self.api("GET", first, 200)
         self.api("DELETE", path + "/photos/" + first.rsplit("/", 1)[1], 404, token="other-token")
@@ -110,6 +137,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.api("GET", "/api/users/2", 200)["reviews"], [])
         self.api("GET", "/api/users/999", 404)
         self.api("DELETE", path, 200, token=token)
+        self.api("PUT", vote_path, 404, token="other-token", data={"vote": 1})
         self.api("GET", second, 404)
 
     def test_admin_workflows(self):

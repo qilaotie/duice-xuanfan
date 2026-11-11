@@ -48,6 +48,8 @@
         delete_canteen: '删除档口',
         delete_rating: '删除评价',
         restore_rating: '恢复评价',
+        set_rating_label: '添加评价标签',
+        remove_rating_label: '移除评价标签',
         delete_report: '处理举报',
         backfill_history: '回填历史',
         archive_canteen: '下架档口',
@@ -1572,12 +1574,17 @@
                                 : `<span class="comment-user">${escapeHtml(comment.user || '匿名用户')}</span>`}
                             <span class="comment-time">${escapeHtml(formatTime(comment.created_at))}</span>
                             <span class="stars stars-sm">${starsHtml(comment.score)}</span>
+                            ${comment.moderation_label ? `<span class="badge badge-amber" title="管理员标记">${escapeHtml(comment.moderation_label)}</span>` : ''}
                         </div>
                         ${(comment.dish_scores || []).map(dish => `<p class="comment-text">${escapeHtml(dish.name)} · ${escapeHtml(dish.score)} 分</p>`).join('')}
                         ${comment.dish_name ? `<p class="comment-text"><strong>菜品：</strong>${escapeHtml(comment.dish_name)}</p>` : ''}
                         <p class="comment-text">${escapeHtml(comment.content || '（无文字评价）')}</p>
                         ${renderReviewPhotos(comment)}
                         <div class="comment-actions">
+                            ${Number.isInteger(comment.my_vote) ? `<div class="review-votes" role="group" aria-label="评价投票">
+                                <button type="button" class="btn btn-ghost btn-sm" data-action="review-vote" data-id="${Number(comment.id)}" data-vote="1" aria-pressed="${comment.my_vote === 1}">点赞 <span>${formatNumber(comment.likes)}</span></button>
+                                <button type="button" class="btn btn-ghost btn-sm" data-action="review-vote" data-id="${Number(comment.id)}" data-vote="-1" aria-pressed="${comment.my_vote === -1}">踩 <span>${formatNumber(comment.dislikes)}</span></button>
+                            </div>` : ''}
                             ${comment.is_mine ? `
                                 <button type="button" class="link-btn" data-action="edit-review" data-id="${Number(comment.id)}">修改</button>
                                 <button type="button" class="link-btn" data-action="withdraw-review" data-id="${Number(comment.id)}">撤回</button>
@@ -2274,12 +2281,13 @@
         setAdminLoading();
 
         try {
-            const [categories, canteens, ratings, reports, actions] = await Promise.all([
+            const [categories, canteens, ratings, reports, actions, reviewLabels] = await Promise.all([
                 api('/api/admin/categories'),
                 api('/api/admin/canteens'),
                 api('/api/admin/ratings'),
                 api('/api/admin/reports'),
-                api('/api/admin/actions')
+                api('/api/admin/actions'),
+                api('/api/admin/review-labels')
             ]);
 
             state.admin = {
@@ -2287,7 +2295,8 @@
                 canteens: Array.isArray(canteens) ? canteens : [],
                 ratings: Array.isArray(ratings) ? ratings : [],
                 reports: Array.isArray(reports) ? reports : [],
-                actions: Array.isArray(actions) ? actions : []
+                actions: Array.isArray(actions) ? actions : [],
+                reviewLabels
             };
 
             renderAdminStats();
@@ -2358,6 +2367,7 @@
                 renderAdminCanteens();
                 break;
             case 'ratings':
+                renderReviewLabels();
                 renderAdminRatings();
                 break;
             case 'reports':
@@ -2449,15 +2459,18 @@
             list.innerHTML = rows.length ? rows.map(row => `
                 <article class="detail-panel stack" data-feedback-id="${Number(row.id)}">
                     <strong>${row.kind === 'stall' ? (isCampus(row) ? '校内美食推荐 · ' : '档口推荐 · ') + escapeHtml(row.name) : '问题反馈'}</strong>
-                    <p class="muted">${escapeHtml(formatTime(row.created_at))} · ${{pending:'待处理',approved:'已入库',closed:'已处理'}[row.status]}</p>
+                    <p class="muted">${escapeHtml(formatTime(row.created_at))} · ${{pending:'待处理',approved:'已入库',closed:row.kind === 'stall' ? '已忽略' : '已处理'}[row.status]}</p>
                     <p class="comment-text">${escapeHtml(row.content || '（无补充说明）')}</p>
                     ${row.has_photo ? `<div><button type="button" class="btn btn-soft btn-sm" data-action="feedback-photo" data-id="${Number(row.id)}">查看提交照片</button></div>` : ''}
                     ${row.status === 'pending' && row.kind === 'stall' ? `<form class="inline-form" data-feedback-approve>
                         <input name="name" aria-label="正式档口名称" value="${escapeHtml(row.name)}" maxlength="100" required>
                         <select name="category" aria-label="所属食堂或楼宇" required><option value="">请选择所属位置</option>${options(row)}</select>
-                        <button type="submit" class="btn btn-primary">审核并入库</button>
+                        <div class="feedback-review-actions">
+                            <button type="submit" class="btn btn-primary">审核并入库</button>
+                            <button type="button" class="btn btn-ghost" data-action="feedback-close" data-id="${Number(row.id)}">忽略</button>
+                        </div>
                     </form>` : ''}
-                    ${row.status === 'pending' ? `<div><button type="button" class="btn btn-ghost btn-sm" data-action="feedback-close" data-id="${Number(row.id)}">${row.kind === 'stall' ? '关闭建议' : '标为已处理'}</button></div>` : ''}
+                    ${row.status === 'pending' && row.kind !== 'stall' ? `<div><button type="button" class="btn btn-ghost btn-sm" data-action="feedback-close" data-id="${Number(row.id)}">标为已处理</button></div>` : ''}
                 </article>`).join('') : adminEmpty('暂无反馈。');
         } catch (error) {
             if ($('#feedback-status').value === status) list.textContent = error.message;
@@ -2468,7 +2481,8 @@
         setBusy(button, true);
         try {
             await api(`/api/admin/feedback/${id}`, { method: 'POST', body });
-            toast(body.action === 'approve' ? '档口已入库' : '反馈已处理');
+            const message = body.action === 'approve' ? '档口已入库' : (button.closest('[data-feedback-approve]') ? '已忽略这条推荐' : '反馈已处理');
+            toast(message);
             await loadFeedback();
             if (body.action === 'approve') await Promise.all([loadCanteens(), loadAdminAll()]);
         } catch (error) {
@@ -2597,16 +2611,85 @@
                     <p>
                         ${escapeHtml(formatTime(rating.created_at))}
                         ${rating.is_deleted ? '<span class="badge badge-red">已删除</span>' : '<span class="badge badge-amber">' + escapeHtml(rating.score) + ' 分</span>'}
+                        ${rating.moderation_label ? `<span class="badge badge-amber">${escapeHtml(rating.moderation_label)}</span>` : ''}
                     </p>
                     <p class="admin-comment">${escapeHtml(rating.comment || '（无文字评价）')}</p>
                 </div>
                 <div class="admin-row-actions">
+                    ${!rating.is_deleted ? `<select aria-label="评价标签" data-review-label-id="${Number(rating.id)}">
+                        <option value="">无标签</option>
+                        ${state.admin.reviewLabels.map(({name}) => `<option value="${escapeHtml(name)}"${name === rating.moderation_label ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('')}
+                    </select>` : ''}
                     ${rating.is_deleted
                         ? `<button type="button" class="btn btn-soft btn-sm" data-action="admin-restore-rating" data-id="${rating.id}">恢复</button>`
                         : `<button type="button" class="btn btn-danger btn-sm" data-action="admin-delete-rating" data-id="${rating.id}">删除</button>`}
                 </div>
             </div>
         `).join('');
+    }
+
+    async function voteOnReview(id, button) {
+        const buttons = $$('button', button.closest('.review-votes'));
+        const vote = button.getAttribute('aria-pressed') === 'true' ? 0 : Number(button.dataset.vote);
+        buttons.forEach(item => { item.disabled = true; });
+        try {
+            await ensurePostingIdentity();
+            const result = await api(`/api/ratings/${id}/vote`, { method: 'PUT', body: { vote } });
+            for (const item of buttons) {
+                const like = item.dataset.vote === '1';
+                item.setAttribute('aria-pressed', String(result.my_vote === Number(item.dataset.vote)));
+                $('span', item).textContent = formatNumber(like ? result.likes : result.dislikes);
+            }
+        } catch (error) {
+            toast(error.message, 'error');
+        } finally {
+            buttons.forEach(item => { item.disabled = false; });
+        }
+    }
+
+    function renderReviewLabels() {
+        $('#admin-review-label-list').innerHTML = state.admin.reviewLabels.map(({name}) => `
+            <details class="admin-review-label">
+                <summary>${escapeHtml(name)}</summary>
+                <form class="inline-form" data-review-label-name="${escapeHtml(name)}">
+                    <input name="label" aria-label="标签名称" maxlength="20" required value="${escapeHtml(name)}">
+                    <button type="submit" class="btn btn-soft">保存名称</button>
+                    <button type="button" class="btn btn-danger" data-action="delete-review-label">删除标签</button>
+                </form>
+            </details>`).join('') || '<p class="muted">暂无标签</p>';
+    }
+
+    async function saveReviewLabelCatalog(method, button, body) {
+        button.disabled = true;
+        try {
+            await api('/api/admin/review-labels', {method, body});
+            if (method === 'POST') button.form.reset();
+            await loadAdminAll();
+            toast('标签已更新');
+        } catch (error) {
+            toast(error.message, 'error');
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    async function setReviewLabel(id, select) {
+        const rating = state.admin.ratings.find(item => Number(item.id) === id);
+        if (!rating) return;
+        select.disabled = true;
+        try {
+            const result = await api(`/api/admin/ratings/${id}/label`, {
+                method: 'PUT', body: { label: select.value || null }
+            });
+            rating.moderation_label = result.moderation_label;
+            renderAdminRatings();
+            toast(result.moderation_label ? '已添加标签' : '已移除标签');
+        } catch (error) {
+            select.value = rating.moderation_label || '';
+            toast(error.message, 'error');
+        } finally {
+            select.disabled = false;
+        }
     }
 
     function setRatingFilter(filter) {
@@ -3077,6 +3160,20 @@
             $('#feedback-photo-label').textContent = event.target.files[0]?.name || '最多 5 MB';
         });
         $('#feedback-status').addEventListener('change', loadFeedback);
+        $('#admin-add-review-label').addEventListener('submit', event => {
+            event.preventDefault();
+            saveReviewLabelCatalog('POST', event.submitter, {name: event.target.elements.label.value});
+        });
+        $('#admin-review-label-list').addEventListener('submit', event => {
+            event.preventDefault();
+            saveReviewLabelCatalog('PATCH', event.submitter, {
+                name: event.target.dataset.reviewLabelName, new_name: event.target.elements.label.value
+            });
+        });
+        $('#admin-rating-list').addEventListener('change', event => {
+            const select = event.target.closest('[data-review-label-id]');
+            if (select) setReviewLabel(Number(select.dataset.reviewLabelId), select);
+        });
         $('#admin-feedback-list').addEventListener('submit', event => {
             const form = event.target.closest('[data-feedback-approve]');
             if (!form) return;
@@ -3367,6 +3464,16 @@
             case 'report':
                 if (id) openReport(id);
                 break;
+            case 'review-vote':
+                if (id) voteOnReview(id, element);
+                break;
+            case 'delete-review-label': {
+                const name = element.form.dataset.reviewLabelName;
+                if (state.isAdmin && window.confirm(`删除「${name}」？使用该标签的评价会移除此标签。`)) {
+                    saveReviewLabelCatalog('DELETE', element, {name});
+                }
+                break;
+            }
             case 'reset-filters':
                 resetFilters();
                 break;
