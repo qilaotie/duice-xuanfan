@@ -41,7 +41,7 @@ jobs:
           name: flask-test-results
           path: coverage-flask.json
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: windows-2025
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -52,7 +52,8 @@ jobs:
           python-version: '3.11'
       - run: python -m pip install -r canteen_backend/requirements.txt
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install chromium
+        timeout-minutes: 5
       - run: npm run test:frontend
       - uses: actions/upload-artifact@v4
         if: always()
