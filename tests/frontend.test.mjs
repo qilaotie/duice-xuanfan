@@ -85,6 +85,68 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
             await page.locator('#detail-modal .detail-close').click();
         }
     });
+    await scenario('AUTH-UI-01 admin stays hidden for ordinary accounts without CSS', async page => {
+        const base = new URL(page.url()).origin;
+        const credentials = {username: 'ordinary-browser', password: 'test-member-password', confirm_password: 'test-member-password'};
+        const response = await page.request.post(base + '/api/register', {data: credentials});
+        assert.equal(response.status(), 200);
+        const session = await response.json();
+        assert.equal(session.is_admin, false);
+        await page.evaluate(token => {
+            localStorage.setItem('token', 'Bearer ' + token);
+            localStorage.setItem('isAdmin', '0');
+        }, session.token);
+        let stylesheetBlocked = false;
+        await page.route('**/styles.css*', route => {
+            stylesheetBlocked = true;
+            return route.abort();
+        });
+        await page.goto(base + '/?no-css=1#/admin');
+        await waitFor(page, '#canteen-grid [data-action="open-detail"]');
+        assert.equal(stylesheetBlocked, true);
+        assert.equal(await page.locator('#view-admin').isVisible(), false);
+        assert.equal(await page.locator('.nav-link[data-nav="admin"]').isVisible(), false);
+        const admin = await page.request.get(base + '/api/admin/categories', {
+            headers: {Authorization: 'Bearer ' + session.token}
+        });
+        assert.equal(admin.status(), 403);
+    });
+    await scenario('RANK-01 ranking scope, order and minimum review count', async page => {
+        await page.route('**/api/stalls/ranking', route => route.fulfill({json: [
+            {id: 3, name: '竹园面馆', category_name: '竹园一层餐厅', avg_score: 5, rating_count: 1},
+            {id: 4, name: '竹园饭馆', category_name: '竹园二层餐厅', avg_score: 4, rating_count: 8},
+            {id: 7, name: '西军电咖啡', category_name: '西军电餐厅', avg_score: 4.5, rating_count: 10}
+        ]}));
+        await page.reload();
+        await page.locator('button[data-nav="ranking"]').click();
+        const names = page.locator('#ranking-list .ranking-name');
+        await names.first().waitFor();
+        assert.deepEqual(await names.allTextContents(), ['竹园面馆', '西军电咖啡', '竹园饭馆']);
+        await page.locator('#ranking-order').selectOption('count');
+        assert.equal(await names.first().textContent(), '西军电咖啡');
+        await page.locator('#ranking-scope').selectOption('dining:竹园');
+        assert.deepEqual(await names.allTextContents(), ['竹园饭馆', '竹园面馆']);
+        await page.locator('#ranking-min').selectOption('3');
+        assert.deepEqual(await names.allTextContents(), ['竹园饭馆']);
+        await page.locator('#ranking-scope').selectOption('floor:14');
+        assert.deepEqual(await names.allTextContents(), ['西军电咖啡']);
+        await page.locator('#ranking-scope').selectOption('campus:北校区');
+        assert.deepEqual(await names.allTextContents(), ['西军电咖啡']);
+        await page.locator('#ranking-scope').selectOption('floor:6');
+        await page.getByText('没有符合条件的档口').waitFor();
+        await page.locator('#ranking-min').selectOption('1');
+        await page.locator('#ranking-scope').selectOption('');
+        await page.locator('#ranking-food-type').selectOption('drinks');
+        assert.deepEqual(await names.allTextContents(), ['西军电咖啡']);
+        await page.locator('button[data-nav="stalls"]').click();
+        await page.locator('#stall-food-type').selectOption('noodles');
+        await page.waitForURL(/food=noodles/);
+        await page.locator('#canteen-grid [data-action="open-detail"][data-id="3"]').waitFor();
+        assert.equal(await page.locator('#canteen-grid [data-action="open-detail"][data-id="7"]').count(), 0);
+        await page.reload();
+        await page.locator('#canteen-grid [data-action="open-detail"][data-id="3"]').waitFor();
+        assert.equal(await page.locator('#stall-food-type').inputValue(), 'noodles');
+    });
     await scenario('UI-01 campus search and empty results', async page => {
         await page.locator('[data-nav="campus"]').click();
         await waitFor(page, '#campus-food-list [data-id="2"]');
@@ -216,6 +278,24 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await renamed.getByRole('button', {name: '删除标签'}).click();
         await renamed.waitFor({state: 'detached'});
         assert.equal(await rating.getByLabel('评价标签').inputValue(), '');
+        await page.locator('[data-admin-tab="canteens"]').click();
+        await page.getByLabel('新餐饮分类名称').fill('烧烤');
+        await page.getByRole('button', {name: '新增分类', exact: true}).click();
+        await page.getByText('查看分类和档口', {exact: true}).click();
+        const type = page.locator('#admin-food-types [data-food-type-id]').filter({hasText: '烧烤'});
+        await type.waitFor();
+        const typeId = await type.getAttribute('data-food-type-id');
+        await page.locator('#admin-canteen-list [data-action="open-detail"][data-id="1"]').click();
+        const form = page.locator('[data-stall-food-types="1"]');
+        await form.getByRole('checkbox', {name: '烧烤'}).check();
+        await form.getByRole('button', {name: '保存分类', exact: true}).click();
+        await form.getByText('当前使用手动分类').waitFor();
+        await page.locator('#detail-modal .detail-close').click();
+        await type.locator('summary').first().click();
+        await type.locator('[data-action="open-detail"][data-id="1"]').waitFor();
+        await page.locator('button[data-nav="stalls"]').click();
+        await page.locator('#stall-food-type').selectOption(typeId);
+        await page.locator('#canteen-grid [data-action="open-detail"][data-id="1"]').waitFor();
     });
     await scenario('ROUTE-01 detail refresh, return filters and browser history', async page => {
         await page.locator('#search-input').fill('测试面馆');

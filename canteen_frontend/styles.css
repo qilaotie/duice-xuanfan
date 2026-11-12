@@ -1110,6 +1110,23 @@ a {
     margin-top: 14px;
 }
 
+.ranking-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+}
+
+.ranking-filters label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+}
+
+.ranking-filters select { width: auto; max-width: 100%; }
+
 .ranking-layout {
     display: grid;
     grid-template-columns: 1.35fr .65fr;

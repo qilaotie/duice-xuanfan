@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=review-controls">
+    <link rel="stylesheet" href="styles.css?v=ranking-filters">
 </head>
 <body>
 <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -109,6 +109,7 @@
                 </div>
 
                 <div class="list-toolbar" id="list-toolbar">
+                    <label class="sort-control">餐饮分类 <select id="stall-food-type" aria-label="档口餐饮分类"></select></label>
                     <div class="toolbar-left">
                         <button type="button" class="chip" id="rated-toggle" data-action="toggle-rated" aria-pressed="false">只看有评分</button>
                         <button type="button" class="chip" id="expand-all" data-action="expand-all">全部展开</button>
@@ -130,7 +131,7 @@
     </section>
 
     <!-- ======== 排行榜视图 ======== -->
-    <section class="view" id="view-campus">
+    <section class="view" id="view-campus" hidden>
         <div class="hero-copy section-hero">
             <span class="eyebrow">CAMPUS FOOD</span>
             <h1>校内美食</h1>
@@ -158,7 +159,7 @@
         </div>
     </section>
 
-    <section class="view" id="view-forum">
+    <section class="view" id="view-forum" hidden>
         <div class="hero-copy section-hero">
             <span class="eyebrow">OFF-CAMPUS FOOD</span>
             <h1>校外美食论坛</h1>
@@ -175,11 +176,21 @@
         <button type="button" class="btn btn-soft" id="forum-more" hidden>查看更多帖子</button>
     </section>
 
-    <section class="view" id="view-ranking">
+    <section class="view" id="view-ranking" hidden>
         <div class="hero-copy section-hero">
             <span class="eyebrow">TOP RATED</span>
             <h1>口碑排行榜</h1>
-            <p>按平均分排序，只统计有效评价。</p>
+            <p>按校区、食堂或楼层找档口，只统计有效评价。</p>
+        </div>
+        <div class="card ranking-filters">
+            <label>餐饮分类 <select id="ranking-food-type" aria-label="排行榜餐饮分类"></select></label>
+            <label>范围 <select id="ranking-scope"><option value="">全部食堂</option></select></label>
+            <label>排序 <select id="ranking-order">
+                <option value="score">评分最高</option><option value="count">评价最多</option>
+            </select></label>
+            <label>评价数 <select id="ranking-min">
+                <option value="1">不限</option><option value="3">至少 3 条</option><option value="5">至少 5 条</option><option value="10">至少 10 条</option>
+            </select></label>
         </div>
         <div class="podium" id="podium"></div>
         <div class="ranking-layout">
@@ -189,8 +200,8 @@
                     <div class="ranking-tools">
                         <span class="muted" id="ranking-count"></span>
                         <div class="mode-switch" id="ranking-mode">
-                            <button type="button" class="mode-btn is-active" data-ranking-mode="all">总榜</button>
-                            <button type="button" class="mode-btn" data-ranking-mode="category">按食堂</button>
+                            <button type="button" class="mode-btn is-active" data-ranking-mode="all">合并排行</button>
+                            <button type="button" class="mode-btn" data-ranking-mode="category">按楼层分组</button>
                         </div>
                     </div>
                 </div>
@@ -198,8 +209,7 @@
             </div>
             <div class="card category-best-card">
                 <div class="card-head">
-                    <h2>各食堂榜首</h2>
-                    <span class="muted">按食堂分组</span>
+                    <h2>各楼层榜首</h2>
                 </div>
                 <div id="category-best"></div>
             </div>
@@ -207,7 +217,7 @@
     </section>
 
     <!-- ======== 管理后台视图 ======== -->
-    <section class="view" id="view-admin">
+    <section class="view" id="view-admin" hidden>
         <div class="hero-copy section-hero">
             <span class="eyebrow">ADMIN CONSOLE</span>
             <h1>管理后台</h1>
@@ -256,6 +266,17 @@
                         </select>
                         <button type="submit" class="btn btn-primary">添加档口</button>
                     </form>
+                    <section class="detail-panel admin-review-labels">
+                        <h3>餐饮分类管理</h3>
+                        <form class="inline-form" id="add-food-type">
+                            <input name="name" aria-label="新餐饮分类名称" placeholder="输入分类名称，例如：烧烤" maxlength="20" required>
+                            <button type="submit" class="btn btn-primary">新增分类</button>
+                        </form>
+                        <details>
+                            <summary>查看分类和档口</summary>
+                            <div class="stack" id="admin-food-types"></div>
+                        </details>
+                    </section>
                     <label class="field">
                         <span>浏览范围</span>
                         <select id="admin-canteen-filter">
@@ -614,6 +635,6 @@
         </div>
     </div>
 </div>
-<script src="app.js?v=review-controls" defer></script>
+<script src="app.js?v=food-type-members" defer></script>
 </body>
 </html>

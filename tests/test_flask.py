@@ -141,6 +141,29 @@ class ApiTests(unittest.TestCase):
         self.api("GET", second, 404)
 
     def test_admin_workflows(self):
+        self.api("POST", "/api/admin/food-types", 403, token="member-token", data={"name": "烧烤"})
+        self.admin("POST", "food-types", 400, data={"name": " "})
+        self.admin("POST", "food-types", 200, data={"name": "烧烤"})
+        self.admin("POST", "food-types", 409, data={"name": "烧烤"})
+        catalog = self.api("GET", "/api/food-types", 200)
+        custom = next(item["id"] for item in catalog["types"] if item["name"] == "烧烤")
+        path = "canteens/1/food-types"
+        self.admin("PUT", path, 400, data={})
+        self.admin("PUT", path, 400, data={"types": "rice"})
+        self.admin("PUT", path, 400, data={"types": ["missing"]})
+        self.admin("PUT", "canteens/999/food-types", 404, data={"types": []})
+        self.admin("PUT", path, 200, data={"types": ["rice", custom, custom]})
+        self.admin("PATCH", f"food-types/{custom}", 200, data={"name": "烤串"})
+        catalog = self.api("GET", "/api/food-types", 200)
+        self.assertEqual(next(item["name"] for item in catalog["types"] if item["id"] == custom), "烤串")
+        self.assertEqual(catalog["overrides"]["1"], ["rice", custom])
+        self.admin("DELETE", f"food-types/{custom}", 200)
+        self.admin("DELETE", f"food-types/{custom}", 404)
+        self.assertEqual(self.api("GET", "/api/food-types", 200)["overrides"]["1"], ["rice"])
+        self.admin("PUT", path, 200, data={"types": []})
+        self.assertEqual(self.api("GET", "/api/food-types", 200)["overrides"]["1"], [])
+        self.admin("PUT", path, 200, data={"types": None})
+        self.assertEqual(self.api("GET", "/api/food-types", 200)["overrides"], {})
         self.api("GET", "/api/admin/categories", 403, token="member-token")
         category = self.admin("POST", "categories", 200, data={"name": "New"})["id"]
         stall = self.admin("POST", "canteens", 200, data={"name": "Test Stall", "category_id": category})["id"]

@@ -4,6 +4,49 @@ export async function admin(ctx) {
         (admin_user_id,action,target_type,target_id,details,created_at) VALUES (?,?,?,?,?,?)`,
         viewer.id, name, type, id, name + ' by ' + viewer.username, now());
     const success = () => json({ msg: '操作成功' });
+    const foodType = /^\/api\/admin\/food-types(?:\/([a-z0-9-]+))?$/.exec(path);
+    if (foodType && ((method === 'POST' && !foodType[1]) || (foodType[1] && ['PATCH', 'DELETE'].includes(method)))) {
+        const id = foodType[1] || crypto.randomUUID();
+        const name = method === 'DELETE' ? null : getText((await body(request)).name, 20, '分类名称');
+        if (name === '') fail(400, '请输入分类名称');
+        try {
+            if (method === 'POST') {
+                await q('INSERT INTO food_types (id,name) VALUES (?,?)', id, name).run();
+            } else {
+                const result = method === 'PATCH'
+                    ? await q('UPDATE food_types SET name=? WHERE id=? RETURNING id', name, id).first()
+                    : (await batch([
+                        q(`UPDATE stall_food_overrides SET types=(SELECT json_group_array(value)
+                            FROM json_each(types) WHERE value<>?) WHERE ? IN (SELECT value FROM json_each(types))`, id, id),
+                        q('DELETE FROM food_types WHERE id=? RETURNING id', id)
+                    ]))[1].results[0];
+                if (!result) fail(404, '分类不存在');
+            }
+        } catch (error) {
+            if (String(error).includes('UNIQUE constraint failed: food_types.name')) fail(409, '分类名称已存在');
+            throw error;
+        }
+        return success();
+    }
+    const stallTypes = /^\/api\/admin\/canteens\/(\d+)\/food-types$/.exec(path);
+    if (stallTypes && method === 'PUT') {
+        const id = Number(stallTypes[1]);
+        const {types} = await body(request);
+        if (types !== null && (!Array.isArray(types) || types.length > 50 ||
+            types.some(type => typeof type !== 'string' || type.length > 36))) fail(400, '无效的餐饮分类');
+        if (!await first('SELECT id FROM canteens WHERE id=?', id)) fail(404, '档口不存在');
+        if (types === null) {
+            await q('DELETE FROM stall_food_overrides WHERE canteen_id=?', id).run();
+        } else {
+            const selected = JSON.stringify([...new Set(types)]);
+            const result = await q(`INSERT INTO stall_food_overrides (canteen_id,types)
+                SELECT id,? FROM canteens WHERE id=? AND NOT EXISTS (
+                    SELECT 1 FROM json_each(?) chosen LEFT JOIN food_types t ON t.id=chosen.value WHERE t.id IS NULL
+                ) ON CONFLICT(canteen_id) DO UPDATE SET types=excluded.types RETURNING canteen_id`, selected, id, selected).first();
+            if (!result) fail(400, '分类已变更，请刷新后重试');
+        }
+        return success();
+    }
     const labelName = value => {
         const name = getText(value, 20, '标签名称');
         if (!name) fail(400, '请输入标签名称');

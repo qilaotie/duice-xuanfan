@@ -2,6 +2,7 @@ import os
 import re
 import json
 from io import BytesIO
+from pathlib import Path
 from PIL import Image, ImageOps, UnidentifiedImageError
 from flask import Flask, request, jsonify, send_file, send_from_directory, url_for, abort
 from flask_sqlalchemy import SQLAlchemy
@@ -1063,6 +1064,76 @@ def get_stall_ranking():
     return jsonify(result)
 
 
+@app.get("/api/food-types")
+def get_food_types():
+    types = db.session.execute(text("SELECT id,name FROM food_types ORDER BY rowid")).mappings()
+    overrides = db.session.execute(text("SELECT canteen_id,types FROM stall_food_overrides"))
+    return jsonify({"types": [dict(row) for row in types],
+                    "overrides": {canteen_id: json.loads(values) for canteen_id, values in overrides}})
+
+
+@app.post("/api/admin/food-types")
+@app.route("/api/admin/food-types/<type_id>", methods=["PATCH", "DELETE"])
+def manage_food_types(type_id=None):
+    _, resp, code = require_admin()
+    if resp:
+        return resp, code
+    try:
+        if request.method == "DELETE":
+            db.session.execute(text("""UPDATE stall_food_overrides SET types=(SELECT json_group_array(value)
+                FROM json_each(types) WHERE value<>:id) WHERE :id IN (SELECT value FROM json_each(types))"""),
+                {"id": type_id})
+            result = db.session.execute(text("DELETE FROM food_types WHERE id=:id RETURNING id"), {"id": type_id}).first()
+        else:
+            data = request.get_json(silent=True)
+            name = review_label_name(data.get("name") if isinstance(data, dict) else None)
+            if type_id is None:
+                result = db.session.execute(text("INSERT INTO food_types (id,name) VALUES (:id,:name) RETURNING id"),
+                                            {"id": str(uuid.uuid4()), "name": name}).first()
+            else:
+                result = db.session.execute(text("UPDATE food_types SET name=:name WHERE id=:id RETURNING id"),
+                                            {"id": type_id, "name": name}).first()
+        if not result:
+            db.session.rollback()
+            return jsonify({"msg": "分类不存在"}), 404
+        db.session.commit()
+    except ValueError:
+        return jsonify({"msg": "分类名称须为 1 至 20 个字符"}), 400
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"msg": "分类名称已存在"}), 409
+    return jsonify({"msg": "操作成功"})
+
+
+@app.put("/api/admin/canteens/<int:canteen_id>/food-types")
+def set_stall_food_types(canteen_id):
+    _, resp, code = require_admin()
+    if resp:
+        return resp, code
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or "types" not in data:
+        return jsonify({"msg": "无效的餐饮分类"}), 400
+    types = data["types"]
+    if types is not None and (not isinstance(types, list) or len(types) > 50 or
+                              any(not isinstance(item, str) or len(item) > 36 for item in types)):
+        return jsonify({"msg": "无效的餐饮分类"}), 400
+    if db.session.get(Canteen, canteen_id) is None:
+        return jsonify({"msg": "档口不存在"}), 404
+    if types is None:
+        db.session.execute(text("DELETE FROM stall_food_overrides WHERE canteen_id=:id"), {"id": canteen_id})
+    else:
+        result = db.session.execute(text("""INSERT INTO stall_food_overrides (canteen_id,types)
+            SELECT id,:types FROM canteens WHERE id=:id AND NOT EXISTS (
+                SELECT 1 FROM json_each(:types) chosen LEFT JOIN food_types t ON t.id=chosen.value WHERE t.id IS NULL
+            ) ON CONFLICT(canteen_id) DO UPDATE SET types=excluded.types RETURNING canteen_id"""),
+            {"id": canteen_id, "types": json.dumps(list(dict.fromkeys(types)))}).first()
+        if not result:
+            db.session.rollback()
+            return jsonify({"msg": "分类已变更，请刷新后重试"}), 400
+    db.session.commit()
+    return jsonify({"msg": "操作成功"})
+
+
 # ========= 管理员接口 =========
 
 @app.route("/api/admin/reports", methods=["GET"])
@@ -1464,6 +1535,7 @@ def admin_delete_canteen(canteen_id):
     log_admin_action(user, 'delete_canteen', 'canteen', canteen_id,
                      f'Deleted canteen "{c.name}" with {len(rating_ids)} rating(s) by admin={user.username}')
     Feedback.query.filter_by(canteen_id=c.id).update({"canteen_id": None}, synchronize_session=False)
+    db.session.execute(text("DELETE FROM stall_food_overrides WHERE canteen_id=:id"), {"id": c.id})
     db.session.delete(c)
     db.session.commit()
     return jsonify({"msg": "删除档口成功"})
@@ -1658,6 +1730,11 @@ def init_database():
         new_label_catalog = not inspect(db.engine).has_table("review_labels")
         db.create_all()
         ensure_db_schema()
+        if not inspect(db.engine).has_table("food_types"):
+            migration = Path(BASE_DIR).parent / "cloudflare" / "migrations" / "0010_food_types.sql"
+            for statement in migration.read_text(encoding="utf-8").split(";"):
+                if statement.strip():
+                    db.session.execute(text(statement))
         if new_label_catalog:
             db.session.execute(text("INSERT OR IGNORE INTO review_labels (name) VALUES ('反串')"))
             db.session.execute(text("""INSERT OR IGNORE INTO review_labels (name)

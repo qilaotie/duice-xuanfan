@@ -159,6 +159,30 @@ test('REV-01 catalog, rating, dish scores, photos and withdrawal', async t => {
 
 test('ADM-01 moderation, catalog management and reviewed suggestions', async t => {
     const { api } = fixture(t);
+    const food = '/api/admin/food-types';
+    const assign = '/api/admin/canteens/1/food-types';
+    const edit = (path, method, status, data) => api(path, status, {method, token: admin, data});
+    await api(food, 403, {method: 'POST', token: member, data: {name: '烧烤'}});
+    await edit(food, 'POST', 400, {name: ' '});
+    await edit(food, 'POST', 200, {name: '烧烤'});
+    await edit(food, 'POST', 409, {name: '烧烤'});
+    let catalog = await api('/api/food-types', 200);
+    const custom = catalog.types.find(type => type.name === '烧烤').id;
+    await edit(assign, 'PUT', 400, {types: ['missing']});
+    await edit(assign, 'PUT', 400, {types: 'rice'});
+    await edit('/api/admin/canteens/999/food-types', 'PUT', 404, {types: []});
+    await edit(assign, 'PUT', 200, {types: ['rice', custom, custom]});
+    await edit(food + '/' + custom, 'PATCH', 200, {name: '烤串'});
+    catalog = await api('/api/food-types', 200);
+    assert.equal(catalog.types.find(type => type.id === custom).name, '烤串');
+    assert.deepEqual(catalog.overrides['1'], ['rice', custom]);
+    await edit(food + '/' + custom, 'DELETE', 200);
+    await edit(food + '/' + custom, 'DELETE', 404);
+    assert.deepEqual((await api('/api/food-types', 200)).overrides['1'], ['rice']);
+    await edit(assign, 'PUT', 200, {types: []});
+    assert.deepEqual((await api('/api/food-types', 200)).overrides['1'], []);
+    await edit(assign, 'PUT', 200, {types: null});
+    assert.deepEqual((await api('/api/food-types', 200)).overrides, {});
     const call = (path, status, method = 'GET', data) => api('/api/admin/' + path, status, { method, data, token: admin });
     await api('/api/admin/categories', 403, { token: member });
     const category = await call('categories', 200, 'POST', { name: 'New dining' });

@@ -78,6 +78,15 @@ async function route(request, env) {
     const viewer = token ? await first('SELECT id,username,nickname,taste,birthplace,is_admin FROM users WHERE token=?', token) : null;
     const auth = () => { if (!viewer) fail(401, '请先登录'); return viewer; };
 
+    if (method === 'GET' && path === '/api/food-types') {
+        const [types, overrides] = await batch([
+            q('SELECT id,name FROM food_types ORDER BY rowid'),
+            q('SELECT canteen_id,types FROM stall_food_overrides')
+        ]);
+        return json({types: types.results, overrides: Object.fromEntries(
+            overrides.results.map(row => [row.canteen_id, JSON.parse(row.types)]))});
+    }
+
     if (method === 'GET' && path === '/api/health') {
         await first('SELECT 1 FROM categories LIMIT 1');
         return json({ ok: true });
