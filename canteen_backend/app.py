@@ -439,13 +439,17 @@ def get_avatar(user_id):
     return send_file(BytesIO(user.avatar), mimetype="image/jpeg", max_age=0)
 
 
+@app.get("/api/my/followers")
 @app.get("/api/my/following")
 def my_following():
     viewer = get_current_user()
     if not viewer or viewer.username.startswith("__guest_"):
         return jsonify({"msg": "请先登录账号"}), 401 if not viewer else 403
-    rows = db.session.execute(text("""SELECT u.id,u.nickname FROM user_follows f
-        JOIN users u ON u.id=f.followed_id WHERE f.follower_id=:id ORDER BY f.rowid DESC"""),
+    followers = request.path.endswith("/followers")
+    person = "follower_id" if followers else "followed_id"
+    owner = "followed_id" if followers else "follower_id"
+    rows = db.session.execute(text(f"""SELECT u.id,u.nickname FROM user_follows f
+        JOIN users u ON u.id=f.{person} WHERE f.{owner}=:id ORDER BY f.rowid DESC"""),
         {"id": viewer.id}).mappings()
     return jsonify([dict(row) for row in rows])
 

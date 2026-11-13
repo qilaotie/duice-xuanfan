@@ -134,10 +134,22 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await page.locator('#detail-modal .detail-close').click();
         await page.locator('#my-reviews-btn').click();
         await page.getByRole('button', {name: '我的关注'}).click();
+        assert.equal(await page.locator('#my-reviews-list').isVisible(), false);
         await page.locator('#my-following-list button').click();
         await profile.getByText('关注测试评价').waitFor();
         await profile.getByRole('button', {name: '取消关注'}).click();
         await profile.getByRole('button', {name: '关注', exact: true}).waitFor();
+        await profile.getByRole('button', {name: '关注', exact: true}).click();
+        await profile.getByRole('button', {name: '取消关注'}).waitFor();
+        await page.evaluate(token => localStorage.setItem('token', 'Bearer ' + token), author.token);
+        await page.goto(base + '/?social=2#/canteens');
+        await page.locator('#my-reviews-btn').click();
+        await page.getByRole('button', {name: '我的关注'}).click();
+        await page.getByRole('button', {name: '关注我的人'}).click();
+        await page.locator('#my-following-list button').waitFor();
+        await page.getByRole('button', {name: '我的个人主页'}).click();
+        await page.locator('#my-profile-panel').getByText('关注测试评价').waitFor();
+        assert.equal(await page.locator('#my-following-panel').isVisible(), false);
     });
     await scenario('RANK-01 ranking scope, order and minimum review count', async page => {
         await page.route('**/api/stalls/ranking', route => route.fulfill({json: [

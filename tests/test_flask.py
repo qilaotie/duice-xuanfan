@@ -105,6 +105,7 @@ class ApiTests(unittest.TestCase):
         for _ in range(2):
             self.api("PUT", follow, 200, token="other-token")
         self.assertEqual(len(self.api("GET", "/api/my/following", 200, token="other-token")), 1)
+        self.assertEqual(self.api("GET", "/api/my/followers", 200, token=token)[0]["id"], 3)
         self.assertTrue(self.api("GET", "/api/users/2", 200, token="other-token")["following"])
         self.api("DELETE", follow, 200, token="other-token")
         self.assertEqual(self.api("GET", "/api/my/following", 200, token="other-token"), [])

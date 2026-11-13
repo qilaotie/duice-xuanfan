@@ -124,6 +124,7 @@ test('REV-01 catalog, rating, dish scores, photos and withdrawal', async t => {
     await api('/api/users/999/follow', 404, {method: 'PUT', token: other});
     for (let i = 0; i < 2; i++) await api(follow, 200, {method: 'PUT', token: other});
     assert.equal((await api('/api/my/following', 200, {token: other})).length, 1);
+    assert.equal((await api('/api/my/followers', 200, {token: member}))[0].id, 3);
     assert.equal((await api('/api/users/2', 200, {token: other})).following, true);
     await api(follow, 200, {method: 'DELETE', token: other});
     assert.deepEqual(await api('/api/my/following', 200, {token: other}), []);

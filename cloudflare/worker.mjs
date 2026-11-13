@@ -158,11 +158,14 @@ async function route(request, env) {
         return new Response(new Uint8Array(row.avatar), { headers: { 'Content-Type': 'image/jpeg', 'X-Content-Type-Options': 'nosniff' } });
     }
 
-    if (method === 'GET' && path === '/api/my/following') {
+    if (method === 'GET' && ['/api/my/following', '/api/my/followers'].includes(path)) {
         const user = auth();
         if (user.username.startsWith('__guest_')) fail(403, '请先登录账号');
+        const followers = path.endsWith('/followers');
+        const person = followers ? 'follower_id' : 'followed_id';
+        const owner = followers ? 'followed_id' : 'follower_id';
         return json(await all(`SELECT u.id, u.nickname FROM user_follows f
-            JOIN users u ON u.id=f.followed_id WHERE f.follower_id=? ORDER BY f.rowid DESC`, user.id));
+            JOIN users u ON u.id=f.${person} WHERE f.${owner}=? ORDER BY f.rowid DESC`, user.id));
     }
 
     const followMatch = /^\/api\/users\/(\d+)\/follow$/.exec(path);

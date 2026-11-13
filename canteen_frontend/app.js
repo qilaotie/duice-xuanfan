@@ -720,19 +720,20 @@
 
     let publicProfileRequest = 0;
 
-    async function openPublicProfile(id) {
+    async function openPublicProfile(id, inline = false) {
         const requestId = ++publicProfileRequest;
         const modal = $('#public-profile-modal');
         const title = $('#public-profile-title');
-        const content = $('#public-profile-content');
-        title.textContent = '个人资料';
+        const content = $(inline ? '#my-profile-panel' : '#public-profile-content');
+        if (!inline) title.textContent = '个人资料';
         content.textContent = '正在加载…';
-        openModal(modal);
+        if (!inline) openModal(modal);
         try {
             const profile = await api(`/api/users/${id}`);
             if (requestId !== publicProfileRequest) return;
-            title.textContent = profile.nickname || '同学';
+            if (!inline) title.textContent = profile.nickname || '同学';
             content.innerHTML = `
+                ${inline ? `<h3>${escapeHtml(profile.nickname || '同学')}</h3>` : ''}
                 <span class="comment-avatar">${avatarContent(profile.avatar_url, profile.nickname || '同学')}</span>
                 <p>口味偏好：${escapeHtml(profile.taste || '未填写')}</p>
                 <p>出生地：${escapeHtml(profile.birthplace || '未填写')}</p>
@@ -754,17 +755,40 @@
         }
     }
 
-    async function loadFollowing() {
+    let followDirection = 'following';
+    let followRequest = 0;
+
+    function selectMySection(section) {
+        $('#my-reviews-list').hidden = section !== 'my-reviews';
+        $('#my-following-panel').hidden = section !== 'my-following';
+        $('#my-profile-panel').hidden = section !== 'my-public-profile';
+        $$('#my-social-actions button').forEach(button => {
+            const active = button.dataset.action === section;
+            button.setAttribute('aria-pressed', String(active));
+            button.classList.toggle('btn-soft', active);
+            button.classList.toggle('btn-ghost', !active);
+        });
+    }
+
+    async function loadFollowing(direction = followDirection) {
+        followDirection = direction;
+        const requestId = ++followRequest;
         const list = $('#my-following-list');
-        $('#my-following-panel').hidden = false;
+        $$('[data-action="follow-list"]').forEach(button => {
+            const active = button.dataset.list === direction;
+            button.setAttribute('aria-pressed', String(active));
+            button.classList.toggle('btn-soft', active);
+            button.classList.toggle('btn-ghost', !active);
+        });
         list.textContent = '正在加载…';
         try {
-            const users = await api('/api/my/following');
+            const users = await api('/api/my/' + direction);
+            if (requestId !== followRequest) return;
             list.innerHTML = users.map(user => `<button type="button" class="btn btn-ghost"
                 data-action="open-public-profile" data-id="${Number(user.id)}">${escapeHtml(user.nickname || '同学')}</button>`).join('')
-                || '<p class="muted">还没有关注的人。</p>';
+                || `<p class="muted">${direction === 'followers' ? '还没有人关注你。' : '还没有关注的人。'}</p>`;
         } catch (error) {
-            list.textContent = error.message;
+            if (requestId === followRequest) list.textContent = error.message;
         }
     }
 
@@ -2210,7 +2234,7 @@
         const list = $('#my-reviews-list');
         list.textContent = '正在加载评价…';
         $('#my-social-actions').hidden = !state.token;
-        $('#my-following-panel').hidden = true;
+        selectMySection('my-reviews');
         openModal(modal);
         try {
             const reviews = await api('/api/my/ratings');
@@ -3866,14 +3890,29 @@
                 if (id && state.token) toggleFollow(id, element);
                 break;
             case 'my-following':
-                if (state.token) loadFollowing();
+                if (state.token) {
+                    selectMySection('my-following');
+                    loadFollowing('following');
+                }
+                break;
+            case 'follow-list':
+                if (state.token) loadFollowing(element.dataset.list === 'followers' ? 'followers' : 'following');
+                break;
+            case 'my-reviews':
+                selectMySection('my-reviews');
                 break;
             case 'my-public-profile':
-                if (state.token) api('/api/profile').then(profile => openPublicProfile(profile.id))
-                    .catch(error => toast(error.message, 'error'));
+                if (state.token) {
+                    selectMySection('my-public-profile');
+                    const panel = $('#my-profile-panel');
+                    panel.textContent = '正在加载…';
+                    api('/api/profile').then(profile => openPublicProfile(profile.id, true))
+                        .catch(error => { panel.textContent = error.message; });
+                }
                 break;
             case 'profile-review-stall':
                 closeModal($('#public-profile-modal'));
+                if (element.closest('#my-profile-panel')) closeModal($('#my-reviews-modal'));
                 if (id) openDetail(id);
                 break;
             case 'edit-my-review':
