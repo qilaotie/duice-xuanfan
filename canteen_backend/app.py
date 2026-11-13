@@ -1853,12 +1853,21 @@ def ensure_db_schema():
         print('ensure_db_schema error:', e)
 
 
+if __package__:
+    from .recommendations import init_recommendations, register_recommendations
+else:
+    from recommendations import init_recommendations, register_recommendations
+
+register_recommendations(app, db, get_current_user)
+
+
 def init_database():
     """建表、迁移旧库、初始化管理员，并补齐历史快照。"""
     with app.app_context():
         new_label_catalog = not inspect(db.engine).has_table("review_labels")
         db.create_all()
         ensure_db_schema()
+        init_recommendations(db)
         follows = Path(BASE_DIR).parent / "cloudflare" / "migrations" / "0011_user_follows.sql"
         db.session.execute(text(follows.read_text(encoding="utf-8")))
         if not inspect(db.engine).has_table("food_types"):

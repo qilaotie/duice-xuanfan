@@ -173,6 +173,44 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await page.locator('#my-profile-panel').getByRole('heading', {name: '新昵称测试'}).waitFor();
         assert.equal(await page.locator('#my-following-panel').isVisible(), false);
     });
+    await scenario('LIST-01 create a draft, add a stall, publish and save the shared list', async page => {
+        const base = new URL(page.url()).origin;
+        const register = async username => (await page.request.post(base + '/api/register', {
+            data: {username, password: 'test-list-password', confirm_password: 'test-list-password'}
+        })).json();
+        const author = await register('list-author');
+        const reader = await register('list-reader');
+        await page.evaluate(token => localStorage.setItem('token', 'Bearer ' + token), author.token);
+        await page.goto(base + '/?recommendations=author#/stalls/1');
+        await page.getByRole('button', {name: '加入清单'}).click();
+        const modal = page.locator('#recommendation-modal');
+        await modal.getByLabel('新清单标题').fill('午饭清单');
+        await modal.getByLabel('推荐理由').fill('午饭可以点面条');
+        await modal.getByRole('button', {name: '保存档口'}).click();
+        await modal.waitFor({state: 'hidden'});
+        await page.locator('#detail-modal .detail-close').click();
+        await page.locator('#my-reviews-btn').click();
+        await page.getByRole('button', {name: '我的清单'}).click();
+        await page.getByRole('button', {name: '午饭清单'}).click();
+        await modal.getByText('午饭可以点面条').waitFor();
+        const sharedUrl = page.url();
+        const listId = new URL(sharedUrl).hash.split('/').at(-1);
+        assert.equal((await page.request.get(base + '/api/recommendations/' + listId)).status(), 404);
+        await modal.getByText('编辑清单', {exact: true}).click();
+        await modal.getByLabel('可见范围').selectOption('public');
+        await modal.getByRole('button', {name: '保存修改'}).click();
+        await modal.getByRole('button', {name: '复制清单链接'}).waitFor();
+        await page.evaluate(token => localStorage.setItem('token', 'Bearer ' + token), reader.token);
+        const readerUrl = new URL(sharedUrl);
+        readerUrl.searchParams.set('recommendations', 'reader');
+        await page.goto(readerUrl.href);
+        await modal.getByRole('button', {name: '收藏清单', exact: true}).click();
+        await modal.getByRole('button', {name: '取消收藏'}).waitFor();
+        await modal.getByRole('button', {name: /测试面馆/}).click();
+        await page.locator('#detail-title').getByText('01 测试面馆').waitFor();
+        await page.goBack();
+        await modal.getByRole('heading', {name: '午饭清单'}).waitFor();
+    });
     await scenario('RANK-01 ranking scope, order and minimum review count', async page => {
         await page.route('**/api/stalls/ranking', route => route.fulfill({json: [
             {id: 3, name: '竹园面馆', category_name: '竹园一层餐厅', avg_score: 5, rating_count: 1},

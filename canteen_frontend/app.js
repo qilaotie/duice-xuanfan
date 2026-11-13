@@ -218,7 +218,7 @@
 
     function saveRouteState() {
         if (applyingRoute || !activeRouteHash || state.detailId || threadId ||
-            /^#\/(stalls\/\d+|forum\/posts\/\d+)/.test(window.location.hash)) return;
+            /^#\/(stalls\/\d+|forum\/posts\/\d+|recommendations\/\d+)/.test(window.location.hash)) return;
         const hash = listHash();
         history.replaceState({ ...history.state, ui: routeSnapshot() }, '', hash);
         activeRouteHash = hash;
@@ -227,7 +227,7 @@
     function openContentRoute(hash) {
         if (applyingRoute || window.location.hash === hash) return;
         saveRouteState();
-        const parent = /^#\/(stalls\/\d+|forum\/posts\/\d+)/.test(window.location.hash)
+        const parent = /^#\/(stalls\/\d+|forum\/posts\/\d+|recommendations\/\d+)/.test(window.location.hash)
             ? history.state?.parent : { hash: window.location.hash, ui: routeSnapshot() };
         history.pushState({ parent, routed: true }, '', hash);
         activeRouteHash = hash;
@@ -239,7 +239,8 @@
             return;
         }
         const routed = modal?.id === 'detail-modal' && /^#\/stalls\/\d+$/.test(window.location.hash) ||
-            modal?.id === 'forum-thread-modal' && /^#\/forum\/posts\/\d+$/.test(window.location.hash);
+            modal?.id === 'forum-thread-modal' && /^#\/forum\/posts\/\d+$/.test(window.location.hash) ||
+            modal?.id === 'recommendation-modal' && /^#\/recommendations\/\d+$/.test(window.location.hash);
         if (!routed) return closeModal(modal);
         if (history.state?.routed) history.back();
         else {
@@ -269,7 +270,8 @@
         const url = new URL(window.location.hash.slice(1).replace(/^campus$/, '/campus').replace(/^forum$/, '/forum') || '/canteens', window.location.origin);
         const detail = /^\/stalls\/(\d+)$/.exec(url.pathname);
         const thread = /^\/forum\/posts\/(\d+)$/.exec(url.pathname);
-        const parent = (detail || thread) ? history.state?.parent : null;
+        const recommendation = /^\/recommendations\/(\d+)$/.exec(url.pathname);
+        const parent = (detail || thread || recommendation) ? history.state?.parent : null;
         const listUrl = parent ? new URL(parent.hash.slice(1), window.location.origin) : url;
         let view = Object.keys(viewPaths).find(name => viewPaths[name] === listUrl.pathname) || 'stalls';
         if (thread) view = 'forum';
@@ -307,9 +309,11 @@
         if (version !== routeVersion) return;
         if (detail) await openDetail(Number(detail[1]));
         if (thread) await openForumThread(Number(thread[1]));
+        if (recommendation) await openRecommendation(Number(recommendation[1]));
         if (version !== routeVersion) return;
         if (window.location.hash !== requestedHash) return applyRoute();
-        const canonical = detail ? '#/stalls/' + detail[1] : thread ? '#/forum/posts/' + thread[1] : listHash();
+        const canonical = detail ? '#/stalls/' + detail[1] : thread ? '#/forum/posts/' + thread[1] :
+            recommendation ? '#/recommendations/' + recommendation[1] : listHash();
         history.replaceState(history.state, '', canonical);
         activeRouteHash = canonical;
         if (history.state?.photoViewer) {
@@ -753,6 +757,7 @@
                 <p>获赞 ${formatNumber(profile.likes_received)} <small>（公开评价）</small></p>
                 ${state.token && !profile.is_self ? `<div><button type="button" class="btn btn-soft btn-sm"
                     data-action="toggle-follow" data-id="${Number(id)}" aria-pressed="${profile.following === true}">${profile.following ? '取消关注' : '关注'}</button></div>` : ''}
+                <div class="stack" data-author-recommendations></div>
                 <h3>历史评价</h3>
                 ${profile.reviews.length ? profile.reviews.map(review => `
                     <article class="detail-panel">
@@ -763,10 +768,191 @@
                         ${review.dish_scores.map(dish => `<p class="comment-text">${escapeHtml(dish.name)} · ${escapeHtml(dish.score)} 分</p>`).join('')}
                     </article>`).join('') : '<p class="muted">暂无公开评价。</p>'}
             `;
+            loadAuthorRecommendations(id, $('[data-author-recommendations]', content));
         } catch (error) {
             if (requestId === publicProfileRequest) content.textContent = error.message;
         }
     }
+
+    const recommendationApi = '/api/recommendations';
+
+    function recommendationCards(lists, emptyText) {
+        return lists.length ? lists.map(list => `<article class="detail-panel">
+            <button type="button" class="link-btn" data-action="recommendation-open" data-id="${Number(list.id)}">${escapeHtml(list.title)}</button>
+            ${list.is_public ? '' : '<span class="badge badge-amber">草稿</span>'}
+            ${list.description ? `<p class="comment-text">${escapeHtml(list.description)}</p>` : ''}
+        </article>`).join('') : `<p class="muted">${emptyText}</p>`;
+    }
+
+    async function loadAuthorRecommendations(id, content) {
+        try {
+            const lists = await api(recommendationApi + '?author=' + id);
+            if (lists.length) content.innerHTML = '<h3>公开清单</h3>' + recommendationCards(lists, '');
+        } catch (error) {
+            content.textContent = error.message;
+        }
+    }
+
+    async function loadMyRecommendations() {
+        const content = $('#my-recommendations-panel');
+        content.textContent = '正在加载…';
+        try {
+            const [own, saved] = await Promise.all([api(recommendationApi), api(recommendationApi + '?saved=1')]);
+            content.innerHTML = `<div><button type="button" class="btn btn-primary btn-sm" data-action="recommendation-create">新建清单</button></div>
+                <h3>我创建的</h3>${recommendationCards(own, '还没有创建清单。')}
+                <h3>我收藏的</h3>${recommendationCards(saved, '还没有收藏清单。')}`;
+        } catch (error) {
+            content.textContent = error.message;
+        }
+    }
+
+    function recommendationForm(list = {}) {
+        return `<form class="stack" data-recommendation-form="metadata" data-id="${Number(list.id || 0)}">
+            <label>标题<input name="title" required maxlength="60" value="${escapeHtml(list.title || '')}"></label>
+            <label>简介<textarea name="description" maxlength="500" rows="3">${escapeHtml(list.description || '')}</textarea></label>
+            <label>可见范围<select name="visibility"><option value="draft">仅自己可见 · 草稿</option>
+                <option value="public"${list.is_public ? ' selected' : ''}>公开 · 可分享</option></select></label>
+            <div><button type="submit" class="btn btn-primary btn-sm">${list.id ? '保存修改' : '创建清单'}</button></div>
+        </form>`;
+    }
+
+    let recommendationRequest = 0;
+
+    async function openRecommendation(id) {
+        const version = ++recommendationRequest;
+        const modal = $('#recommendation-modal');
+        const content = $('#recommendation-content');
+        $$('.modal.is-open').filter(item => item !== modal).forEach(closeModal);
+        openContentRoute('#/recommendations/' + id);
+        $('#recommendation-title').textContent = '美食清单';
+        content.textContent = '正在加载…';
+        openModal(modal);
+        try {
+            const list = await api(recommendationApi + '/' + id);
+            if (version !== recommendationRequest) return;
+            $('#recommendation-title').textContent = list.title;
+            content.innerHTML = `
+                <p class="muted">${escapeHtml(list.nickname || '同学')} · ${list.is_public ? '公开清单' : '草稿'}</p>
+                ${list.description ? `<p class="comment-text">${escapeHtml(list.description)}</p>` : ''}
+                <div class="feedback-review-actions">
+                    ${list.is_public ? '<button type="button" class="btn btn-ghost btn-sm" data-action="copy-content-link">复制清单链接</button>' : ''}
+                    ${list.is_public && !list.own ? `<button type="button" class="btn btn-soft btn-sm" data-action="recommendation-save" data-id="${id}" aria-pressed="${list.saved}">${list.saved ? '取消收藏' : '收藏清单'}</button>` : ''}
+                </div>
+                ${list.items.length ? list.items.map(item => `<article class="detail-panel stack">
+                    <div>
+                        ${item.is_active ? `<button type="button" class="link-btn" data-action="open-detail" data-id="${Number(item.stall_id)}">${escapeHtml(item.name)}</button>` :
+                            `<strong>${escapeHtml(item.name || '档口已移除')}</strong> <span class="badge badge-amber">已下架</span>`}
+                        <p class="muted">${escapeHtml(item.category_name || '')}</p>
+                    </div>
+                    ${item.dishes.length ? `<p>推荐菜品 · ${item.dishes.map(escapeHtml).join('、')}</p>` : ''}
+                    ${item.reason ? `<p class="comment-text">${escapeHtml(item.reason)}</p>` : ''}
+                    ${list.own ? `<div><button type="button" class="btn btn-ghost btn-sm" data-action="recommendation-remove-item" data-id="${id}" data-stall="${Number(item.stall_id)}">移出清单</button></div>` : ''}
+                </article>`).join('') : '<p class="muted">还没有收录档口。</p>'}
+                ${list.own ? `<details><summary>编辑清单</summary>${recommendationForm(list)}
+                    <button type="button" class="btn btn-danger btn-sm" data-action="recommendation-delete" data-id="${id}">删除清单</button>
+                </details>` : ''}
+            `;
+        } catch (error) {
+            if (version === recommendationRequest) content.textContent = error.message;
+        }
+    }
+
+    async function addStallToRecommendation(stallId) {
+        if (!state.token) return openAuth();
+        if (!stallId) return;
+        const version = ++recommendationRequest;
+        const content = $('#recommendation-content');
+        $('#recommendation-title').textContent = '加入清单';
+        content.textContent = '正在加载…';
+        openModal($('#recommendation-modal'));
+        try {
+            const [lists, stall] = await Promise.all([
+                api(recommendationApi),
+                state.detailData?.id === stallId ? state.detailData : api('/api/canteens/' + stallId)
+            ]);
+            if (version !== recommendationRequest) return;
+            content.innerHTML = `<form class="stack" data-recommendation-form="stall" data-id="${Number(stall.id)}">
+                <strong>${escapeHtml(stall.name)}</strong>
+                ${lists.length ? `<label>选择清单<select name="list" required><option value="">请选择</option>
+                    ${lists.map(list => `<option value="${Number(list.id)}">${escapeHtml(list.title)}${list.is_public ? '' : '（草稿）'}</option>`).join('')}
+                    <option value="new">新建草稿</option></select></label>` : '<input type="hidden" name="list" value="new">'}
+                <label data-new-recommendation${lists.length ? ' hidden' : ''}>新清单标题<input name="title" maxlength="60"${lists.length ? ' disabled' : ' required'}></label>
+                ${stall.dishes?.length ? `<fieldset><legend>推荐菜品（可多选）</legend>
+                    ${stall.dishes.map(dish => `<div><label><input type="checkbox" name="dish" value="${Number(dish.id)}"> ${escapeHtml(dish.name)}</label></div>`).join('')}</fieldset>` : ''}
+                <label>推荐理由（选填）<textarea name="reason" maxlength="300" rows="3"></textarea></label>
+                <div><button type="submit" class="btn btn-primary btn-sm">保存档口</button></div>
+            </form>`;
+        } catch (error) {
+            if (version === recommendationRequest) content.textContent = error.message;
+        }
+    }
+
+    async function submitRecommendation(event) {
+        const form = event.target.closest('[data-recommendation-form]');
+        if (!form) return;
+        event.preventDefault();
+        const button = $('button[type="submit"]', form);
+        const data = new FormData(form);
+        const id = Number(form.dataset.id);
+        setBusy(button, true);
+        try {
+            if (form.dataset.recommendationForm === 'metadata') {
+                const result = await api(recommendationApi + (id ? '/' + id : ''), {
+                    method: id ? 'PATCH' : 'POST',
+                    body: {title: data.get('title'), description: data.get('description'), is_public: data.get('visibility') === 'public'}
+                });
+                if (form.isConnected && $('#recommendation-modal').classList.contains('is-open')) await openRecommendation(id || result.id);
+            } else {
+                let listId = data.get('list');
+                const dishIds = data.getAll('dish').map(Number);
+                if (dishIds.length > 30) throw new Error('最多可选择 30 道菜');
+                if (listId === 'new') {
+                    const result = await api(recommendationApi, {method: 'POST', body: {title: data.get('title'), is_public: false}});
+                    listId = String(result.id);
+                    const select = form.elements.list;
+                    if (select instanceof HTMLSelectElement) select.add(new Option(data.get('title') + '（草稿）', listId));
+                    select.value = listId;
+                    const title = $('[data-new-recommendation]', form);
+                    title.hidden = true;
+                    title.querySelector('input').disabled = true;
+                }
+                await api(recommendationApi + '/' + listId + '/items/' + id, {
+                    method: 'PUT', body: {dish_ids: dishIds, reason: data.get('reason')}
+                });
+                if (form.isConnected) closeModal($('#recommendation-modal'));
+                toast('档口已保存到清单');
+            }
+        } catch (error) {
+            toast(error.message, 'error');
+        } finally {
+            setBusy(button, false);
+        }
+    }
+
+    async function changeRecommendation(action, id, button) {
+        if (!state.token) return openAuth();
+        const saving = action === 'recommendation-save';
+        const removingItem = action === 'recommendation-remove-item';
+        if (!saving && !window.confirm(removingItem ? '确定移出这个档口？' : '确定删除这份清单？')) return;
+        const suffix = saving ? '/save' : removingItem ? '/items/' + Number(button.dataset.stall) : '';
+        button.disabled = true;
+        try {
+            await api(recommendationApi + '/' + id + suffix, {
+                method: saving && button.getAttribute('aria-pressed') === 'false' ? 'PUT' : 'DELETE'
+            });
+            if (window.location.hash !== '#/recommendations/' + id) return;
+            if (saving || removingItem) await openRecommendation(id);
+            else {
+                toast('清单已删除');
+                dismissModal($('#recommendation-modal'));
+            }
+        } catch (error) {
+            toast(error.message, 'error');
+        } finally {
+            button.disabled = false;
+        }
+    }
+
 
     let followDirection = 'following';
     let followRequest = 0;
@@ -775,6 +961,7 @@
         $('#my-reviews-list').hidden = section !== 'my-reviews';
         $('#my-following-panel').hidden = section !== 'my-following';
         $('#my-profile-panel').hidden = section !== 'my-public-profile';
+        $('#my-recommendations-panel').hidden = section !== 'my-recommendations';
         $$('#my-social-actions button').forEach(button => {
             const active = button.dataset.action === section;
             button.setAttribute('aria-pressed', String(active));
@@ -1759,6 +1946,7 @@
         const canteenId = Number(id);
         if (!canteenId) return;
 
+        closeModal($('#recommendation-modal'));
         openContentRoute('#/stalls/' + canteenId);
         state.detailId = canteenId;
         destroyChart();
@@ -1827,6 +2015,7 @@
                     <div class="detail-actions">
                         <button type="button" class="btn btn-light btn-sm" data-action="open-rating" data-id="${Number(data.id)}">写评价</button>
                         <button type="button" class="btn btn-ghost-light btn-sm" data-action="copy-content-link">复制链接</button>
+                        <button type="button" class="btn btn-ghost-light btn-sm" data-action="recommendation-add-stall" data-id="${Number(data.id)}">加入清单</button>
                         <button type="button" class="btn btn-ghost-light btn-sm" data-action="feedback-stall-issue">问题反馈</button>
                     </div>
                 </div>
@@ -3520,6 +3709,7 @@
     function closeModal(modal) {
         if (!modal) return;
         const wasOpen = modal.classList.contains('is-open');
+        if (wasOpen && modal.id === 'recommendation-modal') recommendationRequest++;
         modal.classList.remove('is-open');
         modal.setAttribute('aria-hidden', 'true');
         const stackIndex = modalStack.indexOf(modal);
@@ -3573,6 +3763,33 @@
         $('#admin-user-search').addEventListener('submit', event => {
             event.preventDefault();
             loadAdministratorAccounts();
+        });
+        $('#recommendation-content').addEventListener('submit', submitRecommendation);
+        $('#recommendation-content').addEventListener('change', async event => {
+            const select = event.target;
+            if (!select.matches('select[name="list"]')) return;
+            const form = select.form;
+            const title = $('[data-new-recommendation]', form);
+            title.hidden = select.value !== 'new';
+            title.querySelector('input').disabled = title.hidden;
+            title.querySelector('input').required = !title.hidden;
+            const selected = select.value;
+            const submit = $('button[type="submit"]', form);
+            submit.disabled = true;
+            try {
+                const list = /^\d+$/.test(selected) ? await api(recommendationApi + '/' + selected) : null;
+                if (select.value !== selected) return;
+                const item = list?.items.find(entry => entry.stall_id === Number(form.dataset.id));
+                form.elements.reason.value = item?.reason || '';
+                $$('input[name="dish"]', form).forEach(input => {
+                    input.checked = item?.dish_ids.includes(Number(input.value)) ?? false;
+                });
+            } catch (error) {
+                toast(error.message, 'error');
+                if (select.value === selected) select.value = '';
+            } finally {
+                if (select.value === selected || !select.value) submit.disabled = false;
+            }
         });
         $('#add-food-type').addEventListener('submit', event => {
             event.preventDefault();
@@ -3873,6 +4090,27 @@
         const id = rawId && /^\d+$/.test(rawId) ? Number(rawId) : null;
 
         switch (action) {
+            case 'my-recommendations':
+                selectMySection('my-recommendations');
+                loadMyRecommendations();
+                break;
+            case 'recommendation-open':
+                if (id) openRecommendation(id);
+                break;
+            case 'recommendation-create':
+                ++recommendationRequest;
+                $('#recommendation-title').textContent = '新建清单';
+                $('#recommendation-content').innerHTML = recommendationForm();
+                openModal($('#recommendation-modal'));
+                break;
+            case 'recommendation-add-stall':
+                addStallToRecommendation(id);
+                break;
+            case 'recommendation-save':
+            case 'recommendation-remove-item':
+            case 'recommendation-delete':
+                if (id) changeRecommendation(action, id, element);
+                break;
             case 'photo-previous':
                 stepViewerPhoto(-1);
                 break;

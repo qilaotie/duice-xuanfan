@@ -54,6 +54,26 @@ class ApiTests(unittest.TestCase):
         stream.seek(0)
         return stream, "photo.jpg"
 
+    def test_recommendation_lifecycle(self):
+        base = "/api/recommendations"
+        draft = {"title": "午饭", "is_public": False}
+        owner = "member-token"
+        reader = "other-token"
+        list_id = self.api("POST", base, 201, token=owner, data=draft)["id"]
+        url = f"{base}/{list_id}"
+        self.api("GET", url, 404, token=reader)
+        self.api("PUT", url + "/items/1", 400, token=owner, data={"dish_ids": [99], "reason": ""})
+        self.api("PUT", url + "/items/1", 200, token=owner, data={"dish_ids": [], "reason": "推荐面条"})
+        self.api("PATCH", url, 200, token=owner, data={**draft, "is_public": True})
+        self.assertEqual(self.api("GET", url, 200)["items"][0]["reason"], "推荐面条")
+        self.api("PATCH", url, 403, token=reader, data=draft)
+        self.api("PUT", url + "/save", 200, token=reader)
+        self.assertEqual(self.api("GET", base + "?saved=1", 200, token=reader)[0]["id"], list_id)
+        self.api("DELETE", url + "/save", 200, token=reader)
+        self.api("DELETE", url + "/items/1", 200, token=owner)
+        self.api("DELETE", url, 200, token=owner)
+        self.api("GET", url, 404)
+
     def test_account_profile_and_avatars(self):
         account = {"username": "new", "password": "test-password", "confirm_password": "test-password"}
         self.api("GET", "/", 200)

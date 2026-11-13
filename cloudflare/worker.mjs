@@ -2,6 +2,7 @@ import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { admin } from './admin.mjs';
 import { forum } from './forum.mjs';
+import { recommendations } from './recommendations.mjs';
 
 const derive = promisify(scrypt);
 const sensitive = value => /脏话|恶意|攻击/.test(value);
@@ -77,6 +78,9 @@ async function route(request, env) {
     const token = /^Bearer ([a-f0-9]{32})$/.exec(request.headers.get('Authorization') || '')?.[1];
     const viewer = token ? await first('SELECT id,username,nickname,taste,birthplace,is_admin,is_muted FROM users WHERE token=? AND is_banned=0', token) : null;
     const auth = () => { if (!viewer) fail(401, '请先登录'); return viewer; };
+    if (path === '/api/recommendations' || path.startsWith('/api/recommendations/')) {
+        return recommendations({request, path, method, viewer, q, first, all, json, fail, body});
+    }
     if (viewer?.is_muted && (
         (method === 'POST' && (path === '/api/ratings' || path === '/api/feedback' || path.startsWith('/api/forum/'))) ||
         (method === 'PATCH' && /^\/api\/ratings\/\d+$/.test(path))
