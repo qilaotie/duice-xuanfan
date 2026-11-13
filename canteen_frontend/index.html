@@ -320,6 +320,16 @@
                         <button type="button" class="chip" data-rating-filter="active">有效</button>
                         <button type="button" class="chip" data-rating-filter="deleted">已删除</button>
                     </div>
+                    <div class="filter-row" id="admin-rating-search-filters">
+                        <input id="admin-rating-search" type="search" aria-label="搜索评价" placeholder="搜索评价、账号或档口">
+                        <select id="admin-rating-stall" aria-label="筛选档口"><option value="">全部档口</option></select>
+                        <select id="admin-rating-score" aria-label="筛选评分">
+                            <option value="">全部评分</option>
+                            <option value="5">5 分</option><option value="4">4 分</option><option value="3">3 分</option>
+                            <option value="2">2 分</option><option value="1">1 分</option>
+                        </select>
+                        <select id="admin-rating-label" aria-label="筛选标签"><option value="">全部标签</option></select>
+                    </div>
                     <section class="detail-panel admin-review-labels">
                         <h3>评价标签管理</h3>
                         <form class="inline-form" id="admin-add-review-label">
@@ -685,6 +695,6 @@
         </div>
     </div>
 </div>
-<script src="app.js?v=user-management" defer></script>
+<script src="app.js?v=admin-review-tools" defer></script>
 </body>
 </html>

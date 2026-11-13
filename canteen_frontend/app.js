@@ -1925,6 +1925,7 @@
                                 <button type="button" class="btn btn-ghost btn-sm" data-action="review-vote" data-id="${Number(comment.id)}" data-vote="-1" aria-pressed="${comment.my_vote === -1}" aria-label="踩" title="踩">👎 <span>${formatNumber(comment.dislikes)}</span></button>
                             </div>` : ''}
                             ${state.isAdmin && reviewLabels ? reviewLabelSelect(comment, reviewLabels) : ''}
+                            ${state.isAdmin ? `<button type="button" class="btn btn-danger btn-sm" data-action="admin-delete-rating" data-id="${Number(comment.id)}">删除评价</button>` : ''}
                             ${comment.is_mine ? `
                                 <button type="button" class="link-btn" data-action="edit-review" data-id="${Number(comment.id)}">修改</button>
                                 <button type="button" class="link-btn" data-action="withdraw-review" data-id="${Number(comment.id)}">撤回</button>
@@ -2708,8 +2709,10 @@
                         <p>${escapeHtml(account.nickname || '未设置昵称')}</p>
                         <p>${account.is_admin ? '管理员' : '普通用户'} · ${account.is_banned ? '已封禁' : '可登录'} · ${account.is_muted ? '已禁言' : '可发言'}</p>
                     </div>
-                    ${account.username === 'admin' ? '<span class="muted">主管理员</span>' : `<div class="admin-row-actions">
-                        ${[
+                    <div class="admin-row-actions">
+                        <button type="button" class="btn btn-ghost btn-sm" data-action="open-public-profile"
+                            data-id="${Number(account.id)}" aria-label="查看 ${escapeHtml(account.username)} 的主页">查看主页</button>
+                        ${account.username === 'admin' ? '<span class="muted">主管理员</span>' : [
                             ['is_admin', account.is_admin ? '撤销管理权限' : '设为管理员'],
                             ['is_banned', account.is_banned ? '解除封禁' : '封禁'],
                             ['is_muted', account.is_muted ? '解除禁言' : '禁言']
@@ -2717,7 +2720,7 @@
                             data-action="moderate-user" data-id="${Number(account.id)}" data-field="${field}"
                             data-enabled="${!account[field]}" data-account="${escapeHtml(account.username)}"
                             ${field === 'is_admin' && account.is_banned && !account.is_admin ? 'disabled' : ''}>${label}</button>`).join('')}
-                    </div>`}
+                    </div>
                 </div>`).join('') || adminEmpty('没有找到匹配的用户。');
         } catch (error) {
             list.textContent = error.message;
@@ -3023,14 +3026,28 @@
         if (!list || !state.admin) return;
 
         const filter = state.adminRatingFilter;
+        const stallSelect = $('#admin-rating-stall');
+        const labelSelect = $('#admin-rating-label');
+        const stalls = new Map(state.admin.ratings.map(rating => [rating.canteen_id, rating.canteen_name || '未知档口']));
+        const selectedStall = stallSelect.value;
+        const selectedLabel = labelSelect.value;
+        stallSelect.replaceChildren(new Option('全部档口', ''), ...Array.from(stalls, ([id, name]) => new Option(name, id)));
+        labelSelect.replaceChildren(new Option('全部标签', ''), new Option('无标签', 'untagged'),
+            ...state.admin.reviewLabels.map(({name}) => new Option(name, 'label:' + name)));
+        if (Array.from(stallSelect.options).some(option => option.value === selectedStall)) stallSelect.value = selectedStall;
+        if (Array.from(labelSelect.options).some(option => option.value === selectedLabel)) labelSelect.value = selectedLabel;
+        const query = $('#admin-rating-search').value.trim().toLowerCase();
+        const score = $('#admin-rating-score').value;
         const rows = state.admin.ratings.filter(rating => {
-            if (filter === 'active') return !rating.is_deleted;
-            if (filter === 'deleted') return Boolean(rating.is_deleted);
-            return true;
+            if ((filter === 'active' && rating.is_deleted) || (filter === 'deleted' && !rating.is_deleted)) return false;
+            if (stallSelect.value && String(rating.canteen_id) !== stallSelect.value) return false;
+            if (score && Number(rating.score) !== Number(score)) return false;
+            if (labelSelect.value && labelSelect.value !== (rating.moderation_label ? 'label:' + rating.moderation_label : 'untagged')) return false;
+            return !query || [rating.comment, rating.user, rating.canteen_name].some(value => (value || '').toLowerCase().includes(query));
         });
 
         if (!rows.length) {
-            list.innerHTML = adminEmpty(filter === 'all' ? '还没有评价。' : '这个筛选条件下没有评价。');
+            list.innerHTML = adminEmpty(state.admin.ratings.length ? '没有找到符合条件的评价。' : '还没有评价。');
             return;
         }
 
@@ -3313,16 +3330,19 @@
         }
     }
 
-    async function deleteRating(id) {
+    async function deleteRating(id, button) {
         if (!window.confirm('确定删除这条评价吗？删除后可以在“已删除”筛选中恢复。')) return;
-        const returnTab = state.adminTab === 'reports' ? 'reports' : 'ratings';
+        const detailId = button.closest('#detail-content') ? state.detailId : null;
+        button.disabled = true;
         try {
             await api(`/api/admin/ratings/${id}`, { method: 'DELETE' });
             toast('评价已删除');
+            if (detailId && state.detailId === detailId && $('#detail-modal').classList.contains('is-open')) await openDetail(detailId);
             await refreshAll();
-            switchAdminTab(returnTab);
         } catch (error) {
             toast(error.message, 'error');
+        } finally {
+            button.disabled = false;
         }
     }
 
@@ -3332,7 +3352,6 @@
             await api(`/api/admin/ratings/${id}/restore`, { method: 'POST' });
             toast('评价已恢复');
             await refreshAll();
-            switchAdminTab('ratings');
         } catch (error) {
             toast(error.message, 'error');
         }
@@ -3633,6 +3652,10 @@
             saveReviewLabelCatalog('PATCH', event.submitter, {
                 name: event.target.closest('[data-review-label-name]').dataset.reviewLabelName, new_name: event.target.elements.label.value
             });
+        });
+        $('#admin-rating-search').addEventListener('input', renderAdminRatings);
+        $('#admin-rating-search-filters').addEventListener('change', event => {
+            if (event.target.matches('select')) renderAdminRatings();
         });
         $('#admin-rating-list').addEventListener('change', event => {
             const select = event.target.closest('[data-review-label-id]');
@@ -4032,7 +4055,7 @@
                 if (id) archiveCanteen(id);
                 break;
             case 'admin-delete-rating':
-                if (id) deleteRating(id);
+                if (id) deleteRating(id, element);
                 break;
             case 'admin-restore-rating':
                 if (id) restoreRating(id);
