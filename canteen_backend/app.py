@@ -448,10 +448,12 @@ def my_following():
     followers = request.path.endswith("/followers")
     person = "follower_id" if followers else "followed_id"
     owner = "followed_id" if followers else "follower_id"
-    rows = db.session.execute(text(f"""SELECT u.id,u.nickname FROM user_follows f
+    rows = db.session.execute(text(f"""SELECT u.id,u.nickname,u.avatar IS NOT NULL has_avatar FROM user_follows f
         JOIN users u ON u.id=f.{person} WHERE f.{owner}=:id ORDER BY f.rowid DESC"""),
         {"id": viewer.id}).mappings()
-    return jsonify([dict(row) for row in rows])
+    return jsonify([{"id": row.id, "nickname": row.nickname,
+                     "avatar_url": url_for("get_avatar", user_id=row.id) if row.has_avatar else None}
+                    for row in rows])
 
 
 @app.route("/api/users/<int:user_id>/follow", methods=["PUT", "DELETE"])

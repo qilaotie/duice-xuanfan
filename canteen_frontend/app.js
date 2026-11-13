@@ -681,6 +681,7 @@
             const data = await api('/api/profile/avatar', { method: photo ? 'PUT' : 'DELETE', body });
             showProfileAvatar(data.avatar_url);
             status.textContent = photo ? '头像已更新' : '头像已移除';
+            refreshMyProfile(data.id);
             toast(photo ? '头像已更新' : '头像已移除');
         } catch (error) {
             status.textContent = '';
@@ -710,7 +711,8 @@
             localStorage.setItem('nickname', state.nickname);
             updateAuthUI();
             closeModal($('#nickname-modal'));
-            toast('昵称已保存');
+            refreshMyProfile(data.id);
+            toast('资料已保存');
         } catch (error) {
             showError(errorElement, error.message);
         } finally {
@@ -719,6 +721,13 @@
     }
 
     let publicProfileRequest = 0;
+    let ownProfileId = null;
+
+    function refreshMyProfile(id = ownProfileId) {
+        if (id && !$('#my-profile-panel').hidden && $('#my-reviews-modal').classList.contains('is-open')) {
+            return openPublicProfile(id, true);
+        }
+    }
 
     async function openPublicProfile(id, inline = false) {
         const requestId = ++publicProfileRequest;
@@ -732,9 +741,13 @@
             const profile = await api(`/api/users/${id}`);
             if (requestId !== publicProfileRequest) return;
             if (!inline) title.textContent = profile.nickname || '同学';
+            if (inline && profile.is_self) ownProfileId = id;
             content.innerHTML = `
-                ${inline ? `<h3>${escapeHtml(profile.nickname || '同学')}</h3>` : ''}
-                <span class="comment-avatar">${avatarContent(profile.avatar_url, profile.nickname || '同学')}</span>
+                <div class="profile-heading">
+                    <span class="comment-avatar">${avatarContent(profile.avatar_url, profile.nickname || '同学')}</span>
+                    ${inline ? `<h3>${escapeHtml(profile.nickname || '同学')}</h3>` : ''}
+                    ${profile.is_self ? '<button type="button" class="btn btn-soft btn-sm" data-action="edit-own-profile">编辑资料</button>' : ''}
+                </div>
                 <p>口味偏好：${escapeHtml(profile.taste || '未填写')}</p>
                 <p>出生地：${escapeHtml(profile.birthplace || '未填写')}</p>
                 <p>获赞 ${formatNumber(profile.likes_received)} <small>（公开评价）</small></p>
@@ -784,8 +797,11 @@
         try {
             const users = await api('/api/my/' + direction);
             if (requestId !== followRequest) return;
-            list.innerHTML = users.map(user => `<button type="button" class="btn btn-ghost"
-                data-action="open-public-profile" data-id="${Number(user.id)}">${escapeHtml(user.nickname || '同学')}</button>`).join('')
+            list.innerHTML = users.map(user => `<button type="button" class="btn btn-ghost follow-user"
+                data-action="open-public-profile" data-id="${Number(user.id)}">
+                <span class="comment-avatar" aria-hidden="true">${avatarContent(user.avatar_url, user.nickname || '同学')}</span>
+                <strong>${escapeHtml(user.nickname || '同学')}</strong><span aria-hidden="true">›</span>
+                </button>`).join('')
                 || `<p class="muted">${direction === 'followers' ? '还没有人关注你。' : '还没有关注的人。'}</p>`;
         } catch (error) {
             if (requestId === followRequest) list.textContent = error.message;
@@ -3900,6 +3916,9 @@
                 break;
             case 'my-reviews':
                 selectMySection('my-reviews');
+                break;
+            case 'edit-own-profile':
+                if (state.token) openNickname();
                 break;
             case 'my-public-profile':
                 if (state.token) {

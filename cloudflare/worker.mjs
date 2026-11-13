@@ -164,8 +164,11 @@ async function route(request, env) {
         const followers = path.endsWith('/followers');
         const person = followers ? 'follower_id' : 'followed_id';
         const owner = followers ? 'followed_id' : 'follower_id';
-        return json(await all(`SELECT u.id, u.nickname FROM user_follows f
-            JOIN users u ON u.id=f.${person} WHERE f.${owner}=? ORDER BY f.rowid DESC`, user.id));
+        const users = await all(`SELECT u.id,u.nickname,u.avatar IS NOT NULL has_avatar FROM user_follows f
+            JOIN users u ON u.id=f.${person} WHERE f.${owner}=? ORDER BY f.rowid DESC`, user.id);
+        return json(users.map(({id, nickname, has_avatar}) => ({
+            id, nickname, avatar_url: has_avatar ? `/api/avatars/${id}` : null
+        })));
     }
 
     const followMatch = /^\/api\/users\/(\d+)\/follow$/.exec(path);

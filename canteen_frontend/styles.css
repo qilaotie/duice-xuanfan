@@ -1494,6 +1494,24 @@ a {
     height: 42px;
 }
 
+.profile-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.profile-heading h3 { margin: 0; }
+.profile-heading .btn { margin-left: auto; }
+.follow-switch {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+    margin-top: 12px;
+    padding: 4px;
+    border-radius: 12px;
+    background: var(--primary-soft);
+}
+.follow-switch .btn { min-height: 44px; }
+.follow-switch .btn[aria-pressed="true"] { background: #0b5147; color: white; }
+.follow-user.btn { display: flex; justify-content: flex-start; gap: 10px; text-align: left; }
+.follow-user strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.follow-user .comment-avatar { flex: none; }
+
 .feedback-review-actions {
     display: flex;
     flex-wrap: wrap;

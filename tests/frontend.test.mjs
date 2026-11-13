@@ -147,8 +147,14 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await page.getByRole('button', {name: '我的关注'}).click();
         await page.getByRole('button', {name: '关注我的人'}).click();
         await page.locator('#my-following-list button').waitFor();
+        await page.locator('#my-following-list .comment-avatar').waitFor();
+        assert.equal(await page.getByRole('button', {name: '关注我的人'}).getAttribute('aria-pressed'), 'true');
         await page.getByRole('button', {name: '我的个人主页'}).click();
         await page.locator('#my-profile-panel').getByText('关注测试评价').waitFor();
+        await page.locator('#my-profile-panel').getByRole('button', {name: '编辑资料'}).click();
+        await page.locator('#nickname-input').fill('新昵称测试');
+        await page.locator('#nickname-form button[type="submit"]').click();
+        await page.locator('#my-profile-panel').getByRole('heading', {name: '新昵称测试'}).waitFor();
         assert.equal(await page.locator('#my-following-panel').isVisible(), false);
     });
     await scenario('RANK-01 ranking scope, order and minimum review count', async page => {
