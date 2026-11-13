@@ -310,6 +310,18 @@ test('recommendation lists enforce visibility and support publishing, items and 
     await call(list, 200, 'PATCH', member, {title: 'Lunch picks', description: 'Favorite stalls', is_public: true});
     assert.equal((await call('?author=2', 200, 'GET')).length, 1);
     assert.deepEqual((await call(list, 200, 'GET')).items[0].dishes, ['Beef noodles', 'Rice noodles']);
+    const copy = '/' + (await call(list + '/copy', 201, 'POST', member)).id;
+    await call(copy, 404, 'GET', other);
+    assert.deepEqual((await call(copy, 200, 'GET', member)).items[0].dish_ids, [1, 2]);
+    const target = (await call('', 201, 'POST', member, {title: 'Dinner', is_public: false})).id;
+    const bulk = {list_ids: [id, target], stall_id: 1, dish_ids: [2], reason: 'Other reason'};
+    assert.deepEqual(await call('/items', 200, 'POST', member, bulk), {added: 1, skipped: 1});
+    assert.equal((await call(list, 200, 'GET')).items[0].reason, 'Lunch');
+    await call(copy + '/move/1', 409, 'POST', member, {target_id: target});
+    await call('/' + target + '/items/1', 200, 'DELETE', member);
+    await call(copy + '/move/1', 200, 'POST', member, {target_id: target});
+    assert.equal((await call(copy, 200, 'GET', member)).items.length, 0);
+    assert.equal((await call('/' + target, 200, 'GET', member)).items[0].reason, 'Lunch');
     await call(list, 403, 'PATCH', other, {title: 'New title', is_public: true});
     await call(list + '/save', 403, 'PUT', member);
     await call(list + '/save', 200, 'PUT', other);

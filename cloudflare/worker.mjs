@@ -79,7 +79,7 @@ async function route(request, env) {
     const viewer = token ? await first('SELECT id,username,nickname,taste,birthplace,is_admin,is_muted FROM users WHERE token=? AND is_banned=0', token) : null;
     const auth = () => { if (!viewer) fail(401, '请先登录'); return viewer; };
     if (path === '/api/recommendations' || path.startsWith('/api/recommendations/')) {
-        return recommendations({request, path, method, viewer, q, first, all, json, fail, body});
+        return recommendations({request, path, method, viewer, q, first, all, batch, json, fail, body});
     }
     if (viewer?.is_muted && (
         (method === 'POST' && (path === '/api/ratings' || path === '/api/feedback' || path.startsWith('/api/forum/'))) ||

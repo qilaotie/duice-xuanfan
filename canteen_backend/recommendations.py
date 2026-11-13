@@ -14,7 +14,10 @@ def register_recommendations(app, db, current_user):
         return [dict(row) for row in execute(sql, **params).mappings()]
 
     @app.route("/api/recommendations", defaults={"list_id": None}, methods=["GET", "POST"])
+    @app.route("/api/recommendations/items", defaults={"list_id": None, "section": "bulk"}, methods=["POST"])
     @app.route("/api/recommendations/<int:list_id>", methods=["GET", "PATCH", "DELETE"])
+    @app.route("/api/recommendations/<int:list_id>/copy", defaults={"section": "copy"}, methods=["POST"])
+    @app.route("/api/recommendations/<int:list_id>/move/<int:stall_id>", defaults={"section": "move"}, methods=["POST"])
     @app.route("/api/recommendations/<int:list_id>/save", defaults={"section": "save"}, methods=["PUT", "DELETE"])
     @app.route("/api/recommendations/<int:list_id>/items/<int:stall_id>", defaults={"section": "items"}, methods=["PUT", "DELETE"])
     def recommendation_api(list_id, section=None, stall_id=None):
@@ -62,6 +65,33 @@ def register_recommendations(app, db, current_user):
                 return jsonify(**record, own=own, saved=bool(saved), items=items)
         if not user:
             return error("请先登录账号", 401)
+        if section == "bulk":
+            ids, stall, dishes, reason = (data.get(key) for key in ("list_ids", "stall_id", "dish_ids", "reason"))
+            def valid_id(value):
+                return type(value) is int and 0 < value < 2**53
+
+            if (not isinstance(ids, list) or not 1 <= len(ids) <= 100 or not all(map(valid_id, ids))
+                    or not valid_id(stall) or not isinstance(dishes, list) or len(dishes) > 30
+                    or not all(map(valid_id, dishes)) or not isinstance(reason, str) or len(reason) > 300):
+                return error("请检查清单、菜品和推荐理由", 400)
+            targets = json.dumps(list(dict.fromkeys(ids)))
+            matching = rows("""SELECT id,is_public FROM recommendation_lists
+                WHERE user_id=:uid AND id IN (SELECT value FROM json_each(:targets))""", uid=user.id, targets=targets)
+            if len(matching) != len(set(ids)):
+                return error("只能加入自己的清单", 403)
+            if user.is_muted and any(row["is_public"] for row in matching):
+                return error("账号已被禁言，暂时无法发布内容", 403)
+            if not execute("SELECT id FROM canteens WHERE id=:stall AND is_active=1", stall=stall).scalar():
+                return error("档口已下架或不存在", 404)
+            allowed = {row["id"] for row in rows("SELECT id FROM dishes WHERE canteen_id=:stall", stall=stall)}
+            if not set(dishes) <= allowed:
+                return error("所选菜品不属于此档口", 400)
+            result = execute("""INSERT OR IGNORE INTO recommendation_items(list_id,stall_id,dish_ids,reason)
+                SELECT id,:stall,:dishes,:reason FROM recommendation_lists
+                WHERE user_id=:uid AND id IN (SELECT value FROM json_each(:targets))""",
+                uid=user.id, targets=targets, stall=stall, dishes=json.dumps(list(dict.fromkeys(dishes))), reason=reason.strip())
+            db.session.commit()
+            return jsonify(added=result.rowcount, skipped=len(matching) - result.rowcount)
         if section == "save":
             if own:
                 return error("只能收藏他人的公开清单", 403)
@@ -70,6 +100,28 @@ def register_recommendations(app, db, current_user):
             execute(sql, uid=user.id, id=list_id)
         elif list_id is not None and not own:
             return error("只能编辑自己的清单", 403)
+        elif section == "copy":
+            result = execute("""INSERT INTO recommendation_lists(user_id,title,description,is_public)
+                SELECT user_id,substr(title,1,55)||'（副本）',description,0 FROM recommendation_lists WHERE id=:id""", id=list_id)
+            execute("""INSERT INTO recommendation_items(list_id,stall_id,removed_name,dish_ids,reason)
+                SELECT :target,stall_id,removed_name,dish_ids,reason FROM recommendation_items WHERE list_id=:id""",
+                id=list_id, target=result.lastrowid)
+            db.session.commit()
+            return jsonify(id=result.lastrowid), 201
+        elif section == "move":
+            target = data.get("target_id")
+            if type(target) is not int or not 0 < target < 2**53 or target == list_id:
+                return error("请选择另一份清单", 400)
+            destination = execute("SELECT is_public FROM recommendation_lists WHERE id=:id AND user_id=:uid",
+                                  id=target, uid=user.id).first()
+            if not destination:
+                return error("只能移到自己的清单", 403)
+            if destination.is_public and user.is_muted:
+                return error("账号已被禁言，暂时无法发布内容", 403)
+            moved = execute("UPDATE OR IGNORE recommendation_items SET list_id=:target WHERE list_id=:id AND stall_id=:stall",
+                            target=target, id=list_id, stall=stall_id)
+            if not moved.rowcount:
+                return error("档口已移出或目标清单已有该档口", 409)
         elif section == "items":
             if method == "DELETE":
                 execute("DELETE FROM recommendation_items WHERE list_id=:id AND stall_id=:stall", id=list_id, stall=stall_id)

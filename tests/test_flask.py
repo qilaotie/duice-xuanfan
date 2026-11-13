@@ -66,6 +66,16 @@ class ApiTests(unittest.TestCase):
         self.api("PUT", url + "/items/1", 200, token=owner, data={"dish_ids": [], "reason": "推荐面条"})
         self.api("PATCH", url, 200, token=owner, data={**draft, "is_public": True})
         self.assertEqual(self.api("GET", url, 200)["items"][0]["reason"], "推荐面条")
+        copy_id = self.api("POST", url + "/copy", 201, token=owner)["id"]
+        copy_url = f"{base}/{copy_id}"
+        self.api("GET", copy_url, 404)
+        target_id = self.api("POST", base, 201, token=owner, data=draft)["id"]
+        bulk = {"list_ids": [list_id, target_id], "stall_id": 1, "dish_ids": [], "reason": "批量"}
+        self.assertEqual(self.api("POST", base + "/items", 200, token=owner, data=bulk), {"added": 1, "skipped": 1})
+        self.api("POST", copy_url + "/move/1", 409, token=owner, data={"target_id": target_id})
+        self.api("DELETE", f"{base}/{target_id}/items/1", 200, token=owner)
+        self.api("POST", copy_url + "/move/1", 200, token=owner, data={"target_id": target_id})
+        self.assertEqual(self.api("GET", f"{base}/{target_id}", 200, token=owner)["items"][0]["reason"], "推荐面条")
         self.api("PATCH", url, 403, token=reader, data=draft)
         self.api("PUT", url + "/save", 200, token=reader)
         self.assertEqual(self.api("GET", base + "?saved=1", 200, token=reader)[0]["id"], list_id)

@@ -1,6 +1,6 @@
 const summaries = 'SELECT l.id,l.title,l.description,l.is_public FROM recommendation_lists l';
 
-export async function recommendations({ request, path, method, viewer, q, first, all, json, fail, body }) {
+export async function recommendations({ request, path, method, viewer, q, first, all, batch, json, fail, body }) {
     const collection = '/api/recommendations';
     const url = new URL(request.url);
     const member = viewer && !viewer.username.startsWith('__guest_') ? viewer : null;
@@ -29,7 +29,28 @@ export async function recommendations({ request, path, method, viewer, q, first,
         return json(await first('INSERT INTO recommendation_lists(user_id,title,description,is_public) VALUES(?,?,?,?) RETURNING id',
             user.id, ...fields(await body(request))), 201);
     }
-    const match = /^\/api\/recommendations\/(\d+)(?:\/(save|items)(?:\/(\d+))?)?$/.exec(path);
+    if (path === collection + '/items' && method === 'POST') {
+        const user = login();
+        const data = await body(request);
+        const {list_ids, stall_id, dish_ids, reason} = data;
+        const validId = id => Number.isSafeInteger(id) && id > 0;
+        if (!Array.isArray(list_ids) || !list_ids.length || list_ids.length > 100 || !list_ids.every(validId) ||
+            !validId(stall_id) || !Array.isArray(dish_ids) || dish_ids.length > 30 || !dish_ids.every(validId) ||
+            typeof reason !== 'string' || reason.length > 300) fail(400, '请检查清单、菜品和推荐理由');
+        const ids = [...new Set(list_ids)];
+        const lists = await all('SELECT id,is_public FROM recommendation_lists WHERE user_id=? AND id IN (SELECT value FROM json_each(?))',
+            user.id, JSON.stringify(ids));
+        if (lists.length !== ids.length) fail(403, '只能加入自己的清单');
+        if (lists.some(list => list.is_public)) publish();
+        if (!await first('SELECT id FROM canteens WHERE id=? AND is_active=1', stall_id)) fail(404, '档口已下架或不存在');
+        const dishes = await all('SELECT id FROM dishes WHERE canteen_id=?', stall_id);
+        if (dish_ids.some(id => !dishes.some(dish => dish.id === id))) fail(400, '所选菜品不属于此档口');
+        const result = await q(`INSERT OR IGNORE INTO recommendation_items(list_id,stall_id,dish_ids,reason)
+            SELECT id,?,?,? FROM recommendation_lists WHERE user_id=? AND id IN (SELECT value FROM json_each(?))`,
+            stall_id, JSON.stringify([...new Set(dish_ids)]), reason.trim(), user.id, JSON.stringify(ids)).run();
+        return json({added: result.meta.changes, skipped: ids.length - result.meta.changes});
+    }
+    const match = /^\/api\/recommendations\/(\d+)(?:\/(save|items|copy|move)(?:\/(\d+))?)?$/.exec(path);
     if (!match) fail(404, '清单不存在');
     const [, rawId, section, stall] = match;
     const id = Number(rawId);
@@ -56,6 +77,28 @@ export async function recommendations({ request, path, method, viewer, q, first,
         return json({ok: true});
     }
     if (!own) fail(403, '只能编辑自己的清单');
+    if (section === 'copy' && !stall && method === 'POST') {
+        const results = await batch([
+            q(`INSERT INTO recommendation_lists(user_id,title,description,is_public)
+                SELECT user_id,substr(title,1,55)||'（副本）',description,0 FROM recommendation_lists WHERE id=? RETURNING id`, id),
+            q(`WITH target AS MATERIALIZED (SELECT last_insert_rowid() id)
+                INSERT INTO recommendation_items(list_id,stall_id,removed_name,dish_ids,reason)
+                SELECT target.id,stall_id,removed_name,dish_ids,reason FROM recommendation_items CROSS JOIN target WHERE list_id=?`, id)
+        ]);
+        if (!results[0].results.length) fail(404, '清单不存在');
+        return json(results[0].results[0], 201);
+    }
+    if (section === 'move' && stall && method === 'POST') {
+        const {target_id} = await body(request);
+        if (!Number.isSafeInteger(target_id) || target_id <= 0 || target_id === id) fail(400, '请选择另一份清单');
+        const target = await first('SELECT is_public FROM recommendation_lists WHERE id=? AND user_id=?', target_id, member.id);
+        if (!target) fail(403, '只能移到自己的清单');
+        if (target.is_public) publish();
+        const moved = await q('UPDATE OR IGNORE recommendation_items SET list_id=? WHERE list_id=? AND stall_id=?',
+            target_id, id, Number(stall)).run();
+        if (!moved.meta.changes) fail(409, '档口已移出或目标清单已有该档口');
+        return json({ok: true});
+    }
     if (!section && method === 'PATCH') {
         await q('UPDATE recommendation_lists SET title=?,description=?,is_public=? WHERE id=?', ...fields(await body(request)), id).run();
         return json({ok: true});
