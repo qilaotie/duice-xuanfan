@@ -25,7 +25,8 @@
         ratingScore: 5,
         admin: null,
         adminTab: 'categories',
-        adminRatingFilter: 'all'
+        adminRatingFilter: 'all',
+        adminRatingUserId: null
     };
 
     const $ = (selector, root = document) => root.querySelector(selector);
@@ -557,6 +558,7 @@
     }
 
     function forceLogout() {
+        state.adminRatingUserId = null;
         state.token = null;
         state.isAdmin = false;
         state.username = '';
@@ -3282,13 +3284,20 @@
         if (Array.from(labelSelect.options).some(option => option.value === selectedLabel)) labelSelect.value = selectedLabel;
         const query = $('#admin-rating-search').value.trim().toLowerCase();
         const score = $('#admin-rating-score').value;
+        const userId = state.adminRatingUserId;
         const rows = state.admin.ratings.filter(rating => {
+            if (userId !== null) return Number(rating.user_id) === userId;
             if ((filter === 'active' && rating.is_deleted) || (filter === 'deleted' && !rating.is_deleted)) return false;
             if (stallSelect.value && String(rating.canteen_id) !== stallSelect.value) return false;
             if (score && Number(rating.score) !== Number(score)) return false;
             if (labelSelect.value && labelSelect.value !== (rating.moderation_label ? 'label:' + rating.moderation_label : 'untagged')) return false;
             return !query || [rating.comment, rating.user, rating.canteen_name].some(value => (value || '').toLowerCase().includes(query));
         });
+        $('#admin-rating-filters').hidden = userId !== null;
+        $('#admin-rating-search-filters').hidden = userId !== null;
+        $('#admin-rating-author-scope').hidden = userId === null;
+        $('#admin-rating-author-summary').textContent = userId === null ? '' :
+            `${rows[0]?.is_guest ? '访客 #' + userId : rows[0]?.user || '该作者'}的全部评价（${rows.length} 条）`;
 
         if (!rows.length) {
             list.innerHTML = adminEmpty(state.admin.ratings.length ? '没有找到符合条件的评价。' : '还没有评价。');
@@ -3301,15 +3310,18 @@
                     <strong>${rating.author_id
                         ? `<button type="button" class="link-btn" data-action="open-public-profile" data-id="${Number(rating.author_id)}"
                             aria-label="查看 ${escapeHtml(rating.user)} 的主页">${escapeHtml(rating.user)}</button>`
-                        : escapeHtml(rating.user)} · ${escapeHtml(rating.canteen_name || '未知档口')}</strong>
+                        : escapeHtml(rating.is_guest ? '访客 #' + rating.user_id : rating.user)} · ${escapeHtml(rating.canteen_name || '未知档口')}</strong>
                     <p>
                         ${escapeHtml(formatTime(rating.created_at))}
                         ${rating.is_deleted ? '<span class="badge badge-red">已删除</span>' : '<span class="badge badge-amber">' + escapeHtml(rating.score) + ' 分</span>'}
+                        <span class="badge badge-amber">${rating.is_guest ? '访客评价' : rating.is_anonymous ? '匿名评价' : '公开评价'}</span>
                         ${rating.moderation_label ? `<span class="badge badge-amber">${escapeHtml(rating.moderation_label)}</span>` : ''}
                     </p>
                     <p class="admin-comment">${escapeHtml(rating.comment || '（无文字评价）')}</p>
                 </div>
                 <div class="admin-row-actions">
+                    ${userId === null && rating.user_id ? `<button type="button" class="btn btn-ghost btn-sm"
+                        data-action="admin-rating-by-author" data-id="${Number(rating.user_id)}">查看该作者全部评价</button>` : ''}
                     ${!rating.is_deleted ? reviewLabelSelect(rating, state.admin.reviewLabels) : ''}
                     ${rating.is_deleted
                         ? `<button type="button" class="btn btn-soft btn-sm" data-action="admin-restore-rating" data-id="${rating.id}">恢复</button>`
@@ -4153,6 +4165,16 @@
         const id = rawId && /^\d+$/.test(rawId) ? Number(rawId) : null;
 
         switch (action) {
+            case 'admin-rating-by-author':
+            case 'admin-rating-all-authors':
+                if (state.isAdmin) {
+                    state.adminRatingUserId = id;
+                    renderAdminRatings();
+                    const target = id ? $('#admin-rating-author-scope') : $('#admin-rating-filters');
+                    target.scrollIntoView({block: 'nearest'});
+                    $('#admin-rating-list').scrollTop = 0;
+                }
+                break;
             case 'my-recommendations':
                 selectMySection('my-recommendations');
                 loadMyRecommendations();

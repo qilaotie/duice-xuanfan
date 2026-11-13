@@ -231,9 +231,11 @@ export async function admin(ctx) {
         if (path === '/api/admin/ratings') {
             const rows = await all(`SELECT r.id,r.user_id,u.username user,r.canteen_id,c.name canteen_name,
                 CASE WHEN COALESCE(r.is_anonymous,0)=0 AND substr(u.username,1,8)<>'__guest_' THEN u.id END author_id,
+                COALESCE(r.is_anonymous,0) is_anonymous,substr(u.username,1,8)='__guest_' is_guest,
                 r.is_deleted,r.score,r.comment,r.moderation_label,substr(r.created_at,1,16) created_at
                 FROM ratings r JOIN users u ON u.id=r.user_id JOIN canteens c ON c.id=r.canteen_id ORDER BY r.created_at DESC`);
-            return json(rows.map(row => ({ ...row, is_deleted: Boolean(row.is_deleted) })));
+            return json(rows.map(row => ({ ...row, is_deleted: Boolean(row.is_deleted),
+                is_anonymous: Boolean(row.is_anonymous), is_guest: Boolean(row.is_guest) })));
         }
         if (path === '/api/admin/reports') {
             const rows = await all(`SELECT p.id report_id,p.user_id reporter_id,u.username reporter,p.content reason,

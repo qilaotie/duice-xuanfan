@@ -414,6 +414,20 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await rating.getByRole('button', {name: '查看 admin 的主页'}).click();
         await profile.getByText('标签测试评价', {exact: true}).waitFor();
         await profile.getByRole('button', {name: '关闭', exact: true}).click();
+        const anonymous = await page.evaluate(async () => fetch('/api/ratings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', Authorization: localStorage.getItem('token')},
+            body: JSON.stringify({canteen_id: 2, score: 4, comment: '作者历史匿名测试', is_anonymous: true})
+        }).then(response => response.ok));
+        assert.equal(anonymous, true);
+        await page.locator('button[data-nav="stalls"]').click();
+        await page.locator('[data-nav="admin"]').click();
+        const anonymousRow = page.locator('#admin-rating-list .admin-row').filter({hasText: '作者历史匿名测试'});
+        await anonymousRow.getByText('匿名评价', {exact: true}).waitFor();
+        await anonymousRow.getByRole('button', {name: '查看该作者全部评价'}).click();
+        await page.getByRole('status').filter({hasText: 'admin的全部评价'}).waitFor();
+        await rating.waitFor();
+        await page.getByRole('button', {name: '返回评价列表'}).click();
         const label = page.locator('#admin-review-label-list [data-review-label-name]').filter({hasText: '待核实'});
         await label.locator('summary').click();
         await label.locator('input').fill('情况待确认');
