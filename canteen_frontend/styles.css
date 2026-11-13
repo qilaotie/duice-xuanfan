@@ -422,7 +422,13 @@ a {
     color: inherit;
 }
 
-.random-food-picker select { width: auto; max-width: 100%; }
+.random-food-picker select {
+    width: auto;
+    max-width: 100%;
+    color: #17352f;
+    background-color: #fff;
+    color-scheme: light;
+}
 
 .random-food-result {
     display: flex;
