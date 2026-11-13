@@ -424,6 +424,10 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await page.locator('[data-nav="admin"]').click();
         const anonymousRow = page.locator('#admin-rating-list .admin-row').filter({hasText: '作者历史匿名测试'});
         await anonymousRow.getByText('匿名评价', {exact: true}).waitFor();
+        await anonymousRow.getByRole('button', {name: '查看 admin 的主页'}).click();
+        await profile.getByText('标签测试评价', {exact: true}).waitFor();
+        assert.equal(await profile.getByText('作者历史匿名测试', {exact: true}).count(), 0);
+        await profile.getByRole('button', {name: '关闭', exact: true}).click();
         await anonymousRow.getByRole('button', {name: '查看该作者全部评价'}).click();
         await page.getByRole('status').filter({hasText: 'admin的全部评价'}).waitFor();
         await rating.waitFor();

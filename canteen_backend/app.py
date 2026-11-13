@@ -1386,7 +1386,7 @@ def admin_get_ratings():
             "id": r.id,
             "user_id": r.user_id,
             "user": u.username if u else "匿名",
-            "author_id": u.id if u and not r.is_anonymous and not u.username.startswith("__guest_") else None,
+            "author_id": u.id if u and not u.username.startswith("__guest_") else None,
             "is_anonymous": bool(r.is_anonymous),
             "is_guest": bool(u and u.username.startswith("__guest_")),
             "canteen_id": r.canteen_id,
