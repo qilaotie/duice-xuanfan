@@ -118,6 +118,17 @@ test('REV-01 catalog, rating, dish scores, photos and withdrawal', async t => {
     assert.equal(review.photo_urls.length, 2);
     assert.equal(result.dishes[0].score, 4);
     const votePath = `/api/ratings/${review.id}/vote`;
+    const follow = '/api/users/2/follow';
+    await api('/api/my/following', 401);
+    await api(follow, 400, {method: 'PUT', token: member});
+    await api('/api/users/999/follow', 404, {method: 'PUT', token: other});
+    for (let i = 0; i < 2; i++) await api(follow, 200, {method: 'PUT', token: other});
+    assert.equal((await api('/api/my/following', 200, {token: other})).length, 1);
+    assert.equal((await api('/api/users/2', 200, {token: other})).following, true);
+    await api(follow, 200, {method: 'DELETE', token: other});
+    assert.deepEqual(await api('/api/my/following', 200, {token: other}), []);
+    await api(votePath, 200, {method: 'PUT', token: other, data: {vote: 1}});
+    assert.equal((await api('/api/users/2', 200)).likes_received, 1);
     await api(votePath, 401, {method: 'PUT', data: {vote: 1}});
     await api(votePath, 400, {method: 'PUT', token: other, data: {vote: 2}});
     for (const [vote, likes, dislikes] of [[1, 1, 0], [1, 1, 0], [-1, 0, 1], [0, 0, 0]]) {
@@ -152,6 +163,7 @@ test('REV-01 catalog, rating, dish scores, photos and withdrawal', async t => {
     await api('/api/ratings/' + review.id, 404, { method: 'PATCH', token: other, data: rating });
     await api('/api/ratings/' + review.id, 200, { method: 'PATCH', token: member, data: { ...rating, is_anonymous: true } });
     assert.equal((await api('/api/users/2', 200)).reviews.length, 0);
+    assert.equal((await api('/api/users/2', 200)).likes_received, 0);
     await api('/api/ratings/' + review.id, 200, { method: 'DELETE', token: member });
     await api(votePath, 404, {method: 'PUT', token: other, data: {vote: 1}});
     await api(review.photo_urls[0], 404);
@@ -217,6 +229,20 @@ test('ADM-01 moderation, catalog management and reviewed suggestions', async t =
     await call('feedback/' + suggestion.id, 200, 'POST', { action: 'approve', name: 'Campus food', category_id: 100001 });
     await call('feedback/' + issue.id, 200, 'POST', { action: 'close' });
     assert.equal((await call('feedback?status=processed', 200)).length, 2);
+});
+
+test('Only the primary administrator can revoke a maintenance administrator', async t => {
+    const { api, db } = fixture(t);
+    db.exec('UPDATE users SET is_admin=1 WHERE id=2');
+    const path = '/api/admin/administrators';
+    await api(path, 403, {token: member});
+    await api(path + '/1', 404, {method: 'DELETE', token: admin});
+    assert.equal((await api(path, 200, {token: admin}))[0].id, 2);
+    await api(path + '/2', 403, {method: 'DELETE', token: member});
+    await api(path + '/2', 200, {method: 'DELETE', token: admin});
+    await api('/api/profile', 401, {token: member});
+    await api('/api/admin/categories', 403, {token: member});
+    assert.deepEqual(await api(path, 200, {token: admin}), []);
 });
 
 test('FOR-01 posting, filtering, reply floors and ownership', async t => {

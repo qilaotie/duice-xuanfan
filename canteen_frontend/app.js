@@ -43,6 +43,7 @@
     const CATEGORY_DOTS = ['#0f766e', '#b45309', '#4338ca', '#be123c', '#0369a1', '#4d7c0f', '#7c3aed', '#c2410c'];
 
     const ACTION_LABELS = {
+        revoke_admin: '撤销管理员权限',
         add_category: '新增食堂',
         delete_category: '删除食堂',
         add_canteen: '新增档口',
@@ -58,6 +59,7 @@
     };
 
     const TYPE_LABELS = {
+        user: '账号',
         category: '食堂',
         canteen: '档口',
         rating: '评价',
@@ -111,13 +113,14 @@
 
     function updateFoodPickerSummary(picker) {
         const count = selectedFoodTypes(picker).length;
-        $('summary', picker).textContent = count ? `餐饮分类（已选 ${count} 项）` : '餐饮分类（全部）';
+        const label = picker.id === 'random-food-type' ? '推荐品类' : '餐饮分类';
+        $('summary', picker).textContent = count ? `${label}（已选 ${count} 项）` : `${label}（全部）`;
     }
 
     function updateFoodTypeOptions() {
         const types = foodTypes();
         state.foodType = state.foodType.filter(id => types.some(type => type.id === id));
-        for (const selector of ['#stall-food-type', '#ranking-food-type']) {
+        for (const selector of ['#stall-food-type', '#ranking-food-type', '#random-food-type']) {
             const picker = $(selector);
             const previous = selector === '#stall-food-type' ? state.foodType : selectedFoodTypes(picker);
             $('.food-picker-options', picker).innerHTML = types.map(({id, name}) =>
@@ -520,6 +523,9 @@
     }
 
     function updateAuthUI() {
+        const canManageAdmins = state.isAdmin && state.username === 'admin';
+        $('[data-admin-tab="administrators"]').hidden = !canManageAdmins;
+        if (!canManageAdmins && state.adminTab === 'administrators') switchAdminTab('categories');
         const loggedIn = Boolean(state.token);
         $('#my-reviews-btn').hidden = !loggedIn && !localStorage.getItem('guestToken');
 
@@ -723,13 +729,16 @@
         content.textContent = '正在加载…';
         openModal(modal);
         try {
-            const profile = await api(`/api/users/${id}`, { auth: false });
+            const profile = await api(`/api/users/${id}`);
             if (requestId !== publicProfileRequest) return;
             title.textContent = profile.nickname || '同学';
             content.innerHTML = `
                 <span class="comment-avatar">${avatarContent(profile.avatar_url, profile.nickname || '同学')}</span>
                 <p>口味偏好：${escapeHtml(profile.taste || '未填写')}</p>
                 <p>出生地：${escapeHtml(profile.birthplace || '未填写')}</p>
+                <p>获赞 ${formatNumber(profile.likes_received)} <small>（公开评价）</small></p>
+                ${state.token && !profile.is_self ? `<div><button type="button" class="btn btn-soft btn-sm"
+                    data-action="toggle-follow" data-id="${Number(id)}" aria-pressed="${profile.following === true}">${profile.following ? '取消关注' : '关注'}</button></div>` : ''}
                 <h3>历史评价</h3>
                 ${profile.reviews.length ? profile.reviews.map(review => `
                     <article class="detail-panel">
@@ -742,6 +751,35 @@
             `;
         } catch (error) {
             if (requestId === publicProfileRequest) content.textContent = error.message;
+        }
+    }
+
+    async function loadFollowing() {
+        const list = $('#my-following-list');
+        $('#my-following-panel').hidden = false;
+        list.textContent = '正在加载…';
+        try {
+            const users = await api('/api/my/following');
+            list.innerHTML = users.map(user => `<button type="button" class="btn btn-ghost"
+                data-action="open-public-profile" data-id="${Number(user.id)}">${escapeHtml(user.nickname || '同学')}</button>`).join('')
+                || '<p class="muted">还没有关注的人。</p>';
+        } catch (error) {
+            list.textContent = error.message;
+        }
+    }
+
+    async function toggleFollow(id, button) {
+        const method = button.getAttribute('aria-pressed') === 'true' ? 'DELETE' : 'PUT';
+        button.disabled = true;
+        try {
+            const result = await api(`/api/users/${id}/follow`, {method});
+            button.setAttribute('aria-pressed', String(result.following));
+            button.textContent = result.following ? '取消关注' : '关注';
+            if (!$('#my-following-panel').hidden && $('#my-reviews-modal').classList.contains('is-open')) await loadFollowing();
+        } catch (error) {
+            toast(error.message, 'error');
+        } finally {
+            button.disabled = false;
         }
     }
 
@@ -764,6 +802,10 @@
         try {
             const data = await api('/api/categories');
             state.categories = Array.isArray(data) ? data : [];
+            const dining = $('#random-food-dining');
+            const previousDining = dining.value;
+            dining.replaceChildren(new Option('全部食堂', ''), ...diningGroups().map(({name}) => new Option(name, name)));
+            if (Array.from(dining.options).some(option => option.value === previousDining)) dining.value = previousDining;
             renderCategoryNav();
             if (state.view === 'ranking') renderRanking();
             renderCampusFood();
@@ -897,6 +939,46 @@
 
     function diningStalls() {
         return state.canteens.filter(stall => stall.category_kind !== 'campus');
+    }
+
+    function recommendRandomFood() {
+        const panel = $('#random-food-result');
+        const detail = $('button', panel);
+        const selected = selectedFoodTypes($('#random-food-type'));
+        const dining = $('#random-food-dining').value;
+        const group = diningGroups().find(item => item.name === dining);
+        const floors = group ? new Set(group.floors.map(floor => floor.id)) : null;
+        const candidates = diningStalls().filter(stall => {
+            if (floors && !floors.has(stall.category_id)) return false;
+            const types = stallFoodTypes(stall);
+            return stall.is_active !== false && (selected.length
+                ? types.some(({id}) => selected.includes(id))
+                : !(types.length === 1 && types[0].id === 'retail'));
+        });
+        if (!candidates.length) {
+            const message = !state.canteensLoaded ? '档口还没加载好，请稍后再试'
+                : selected.length || dining ? '当前条件下暂无可推荐档口，试试换个食堂或品类' : '暂时没有可推荐的档口';
+            toast(message, 'error');
+            return;
+        }
+        const alternatives = candidates.filter(stall => String(stall.id) !== detail.dataset.id);
+        const pool = alternatives.length ? alternatives : candidates;
+        const stall = pool[Math.floor(Math.random() * pool.length)];
+        const copy = $('#random-food-copy');
+        const name = document.createElement('strong');
+        name.textContent = stall.name;
+        const location = document.createElement('span');
+        location.textContent = [stall.category_name || '位置待补充',
+            stall.score == null ? '暂无评分' : '评分 ' + formatScore(stall.score)].join(' · ');
+        copy.replaceChildren(name, location);
+        detail.dataset.id = String(stall.id);
+        panel.hidden = false;
+        $('#random-food-button').textContent = '换一个';
+    }
+
+    function clearRandomFoodResult() {
+        $('#random-food-result').hidden = true;
+        $('#random-food-button').textContent = '随机推荐';
     }
 
     let campusLocationFilter = '';
@@ -1705,6 +1787,7 @@
                     <div class="detail-actions">
                         <button type="button" class="btn btn-light btn-sm" data-action="open-rating" data-id="${Number(data.id)}">写评价</button>
                         <button type="button" class="btn btn-ghost-light btn-sm" data-action="copy-content-link">复制链接</button>
+                        <button type="button" class="btn btn-ghost-light btn-sm" data-action="feedback-stall-issue">问题反馈</button>
                     </div>
                 </div>
             </div>
@@ -2126,6 +2209,8 @@
         const modal = $('#my-reviews-modal');
         const list = $('#my-reviews-list');
         list.textContent = '正在加载评价…';
+        $('#my-social-actions').hidden = !state.token;
+        $('#my-following-panel').hidden = true;
         openModal(modal);
         try {
             const reviews = await api('/api/my/ratings');
@@ -2532,6 +2617,7 @@
     }
 
     function switchAdminTab(tab) {
+        if (tab === 'administrators' && !(state.isAdmin && state.username === 'admin')) return;
         state.adminTab = tab;
         $$('.admin-tab').forEach(button => button.classList.toggle('is-active', button.dataset.adminTab === tab));
         $$('.admin-section').forEach(section => section.classList.toggle('is-active', section.dataset.adminSection === tab));
@@ -2541,6 +2627,9 @@
     function renderAdminTab(tab) {
         if (!state.admin) return;
         switch (tab) {
+            case 'administrators':
+                loadAdministratorAccounts();
+                break;
             case 'feedback':
                 loadFeedback();
                 break;
@@ -2566,7 +2655,40 @@
         }
     }
 
-    function openFeedback(kind) {
+    async function loadAdministratorAccounts() {
+        const list = $('#admin-accounts-list');
+        list.textContent = '正在加载…';
+        try {
+            const accounts = await api('/api/admin/administrators');
+            list.innerHTML = accounts.map(account => `
+                <div class="admin-row">
+                    <div class="admin-row-main">
+                        <strong>${escapeHtml(account.username)}</strong>
+                        <p>${escapeHtml(account.nickname || '未设置昵称')}</p>
+                    </div>
+                    <button type="button" class="btn btn-danger btn-sm" data-action="revoke-administrator"
+                        data-id="${Number(account.id)}" data-account="${escapeHtml(account.username)}">撤销管理权限</button>
+                </div>`).join('') || adminEmpty('暂无其他管理员账号。');
+        } catch (error) {
+            list.textContent = error.message;
+        }
+    }
+
+    async function revokeAdministrator(id, button) {
+        if (!window.confirm(`撤销「${button.dataset.account}」的管理员权限并让该账号退出登录？`)) return;
+        setBusy(button, true);
+        try {
+            await api(`/api/admin/administrators/${id}`, {method: 'DELETE'});
+            toast('已撤销管理员权限');
+            await loadAdministratorAccounts();
+        } catch (error) {
+            toast(error.message, 'error');
+        } finally {
+            setBusy(button, false);
+        }
+    }
+
+    function openFeedback(kind, target = null) {
         const form = $('#feedback-form');
         const campus = kind === 'campus';
         const stall = kind !== 'issue';
@@ -2581,6 +2703,10 @@
             .filter(category => (category.kind === 'campus') === campus).map(category => new Option(category.name, category.id)));
         if (kind === 'stall') form.elements.building.add(new Option('其他（手动填写）', 'other'));
         updateFeedbackLocation();
+        const context = $('#feedback-stall-context');
+        context.hidden = !target;
+        context.textContent = target ? `档口：${target.name} · ${target.category_name || '未分类'}（ID ${target.id}）` : '';
+        if (target) form.elements.content.maxLength = 1000 - context.textContent.length - 1;
         $('#feedback-name-field').hidden = $('#feedback-photo-field').hidden = !stall;
         form.elements.namedItem('name').required = form.elements.photo.required = stall;
         form.elements.content.required = !stall;
@@ -2608,6 +2734,9 @@
         setBusy(button, true);
         try {
             let body = { kind: form.dataset.kind, content: form.elements.content.value.trim() };
+            if (!$('#feedback-stall-context').hidden && body.content) {
+                body.content = $('#feedback-stall-context').textContent + '\n' + body.content;
+            }
             if (body.kind !== 'issue') {
                 body = new FormData();
                 body.append('kind', 'stall');
@@ -3486,15 +3615,18 @@
 
         $$('.ranking-filters select').forEach(select => select.addEventListener('change', renderRanking));
         updateFoodTypeOptions();
-        for (const selector of ['#stall-food-type', '#ranking-food-type']) {
+        $('#random-food-dining').addEventListener('change', clearRandomFoodResult);
+        for (const selector of ['#stall-food-type', '#ranking-food-type', '#random-food-type']) {
             const picker = $(selector);
             const apply = () => {
                 updateFoodPickerSummary(picker);
                 if (selector === '#stall-food-type') {
                     state.foodType = selectedFoodTypes(picker);
                     renderCanteenGrid();
-                } else {
+                } else if (selector === '#ranking-food-type') {
                     renderRanking();
+                } else {
+                    clearRandomFoodResult();
                 }
             };
             picker.addEventListener('click', event => {
@@ -3706,6 +3838,12 @@
             case 'feedback-issue':
                 openFeedback('issue');
                 break;
+            case 'revoke-administrator':
+                if (id && state.isAdmin && state.username === 'admin') revokeAdministrator(id, element);
+                break;
+            case 'feedback-stall-issue':
+                if (state.detailData) openFeedback('issue', state.detailData);
+                break;
             case 'feedback-stall':
                 openFeedback('stall');
                 break;
@@ -3723,6 +3861,16 @@
                 break;
             case 'open-public-profile':
                 if (id) openPublicProfile(id);
+                break;
+            case 'toggle-follow':
+                if (id && state.token) toggleFollow(id, element);
+                break;
+            case 'my-following':
+                if (state.token) loadFollowing();
+                break;
+            case 'my-public-profile':
+                if (state.token) api('/api/profile').then(profile => openPublicProfile(profile.id))
+                    .catch(error => toast(error.message, 'error'));
                 break;
             case 'profile-review-stall':
                 closeModal($('#public-profile-modal'));
@@ -3759,6 +3907,9 @@
                 break;
             case 'open-rating':
                 openRating(id);
+                break;
+            case 'random-food':
+                recommendRandomFood();
                 break;
             case 'scroll-grid': {
                 const grid = $('#canteen-grid');

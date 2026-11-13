@@ -4,6 +4,23 @@ export async function admin(ctx) {
         (admin_user_id,action,target_type,target_id,details,created_at) VALUES (?,?,?,?,?,?)`,
         viewer.id, name, type, id, name + ' by ' + viewer.username, now());
     const success = () => json({ msg: '操作成功' });
+    if (path === '/api/admin/administrators' || path.startsWith('/api/admin/administrators/')) {
+        if (viewer.username !== 'admin') fail(403, '仅主管理员可以管理管理员账号');
+        if (method === 'GET' && path === '/api/admin/administrators') {
+            return json(await all("SELECT id,username,nickname FROM users WHERE is_admin=1 AND username<>'admin' ORDER BY username"));
+        }
+        const target = /^\/api\/admin\/administrators\/(\d+)$/.exec(path);
+        if (target && method === 'DELETE') {
+            const id = Number(target[1]);
+            const [result] = await batch([
+                q("UPDATE users SET is_admin=0,token=NULL WHERE id=? AND is_admin=1 AND username<>'admin' RETURNING id", id),
+                q(`INSERT INTO admin_actions (admin_user_id,action,target_type,target_id,details,created_at)
+                    SELECT ?, 'revoke_admin', 'user', id, username, ? FROM users WHERE id=? AND changes()=1`, viewer.id, now(), id)
+            ]);
+            if (!result.results.length) fail(404, '没有可撤销的管理员账号');
+            return success();
+        }
+    }
     const foodType = /^\/api\/admin\/food-types(?:\/([a-z0-9-]+))?$/.exec(path);
     if (foodType && ((method === 'POST' && !foodType[1]) || (foodType[1] && ['PATCH', 'DELETE'].includes(method)))) {
         const id = foodType[1] || crypto.randomUUID();

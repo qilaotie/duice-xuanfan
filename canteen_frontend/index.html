@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=food-press-buttons">
+    <link rel="stylesheet" href="styles.css?v=random-dining">
 </head>
 <body>
 <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -65,10 +65,23 @@
                 <h1>今天，吃点好的。</h1>
                 <p>看看同学们正在推荐哪些档口，也给你的宝藏窗口打个分。</p>
                 <div class="hero-actions">
+                    <button type="button" class="btn btn-light" id="random-food-button" data-action="random-food" aria-controls="random-food-result">随机推荐</button>
                     <button type="button" class="btn btn-light" data-action="open-rating">写一条评价</button>
-                    <button type="button" class="btn btn-ghost-light" data-action="scroll-grid">浏览档口 <span aria-hidden="true">→</span></button>
                     <button type="button" class="btn btn-ghost-light btn-sm" data-action="feedback-issue">问题反馈</button>
                     <button type="button" class="btn btn-ghost-light btn-sm" data-action="feedback-stall">推荐档口</button>
+                    <button type="button" class="btn btn-ghost-light" data-action="scroll-grid">浏览档口 <span aria-hidden="true">→</span></button>
+                </div>
+                <details class="food-picker random-food-picker" id="random-food-type">
+                    <summary>推荐品类（全部）</summary>
+                    <label class="sort-control">食堂
+                        <select id="random-food-dining"><option value="">全部食堂</option></select>
+                    </label>
+                    <div class="food-picker-options" role="group" aria-label="推荐品类，可多选"></div>
+                    <button type="button" class="btn btn-ghost-light btn-sm food-picker-clear">清空选择</button>
+                </details>
+                <div class="random-food-result" id="random-food-result" hidden>
+                    <div id="random-food-copy" aria-live="polite"></div>
+                    <button type="button" class="btn btn-light btn-sm" data-action="open-detail">查看档口</button>
                 </div>
             </div>
             <div class="hero-stats" id="hero-stats">
@@ -243,6 +256,7 @@
                 <button type="button" class="admin-tab" data-admin-tab="feedback" role="tab">用户反馈</button>
                 <button type="button" class="admin-tab" data-admin-tab="actions" role="tab">操作日志</button>
                 <button type="button" class="admin-tab" data-admin-tab="maintenance" role="tab">数据维护</button>
+                <button type="button" class="admin-tab" data-admin-tab="administrators" role="tab" hidden>管理员账号</button>
             </div>
 
             <div class="admin-body">
@@ -344,6 +358,11 @@
                     <div class="admin-list" id="admin-action-list"></div>
                 </section>
 
+                <section class="admin-section" data-admin-section="administrators">
+                    <h2>管理员账号</h2>
+                    <p class="muted">撤销权限会让该账号当前的登录失效，重新登录后只能使用普通用户功能。</p>
+                    <div class="admin-list" id="admin-accounts-list" aria-live="polite"></div>
+                </section>
                 <section class="admin-section" data-admin-section="maintenance">
                     <div class="admin-section-head">
                         <div>
@@ -558,6 +577,14 @@
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="my-reviews-title">
         <button type="button" class="icon-btn modal-close" data-close-modal aria-label="关闭">×</button>
         <div class="modal-head"><h2 id="my-reviews-title">我的评价</h2></div>
+        <div class="feedback-review-actions" id="my-social-actions" hidden>
+            <button type="button" class="btn btn-soft btn-sm" data-action="my-following">我的关注</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-action="my-public-profile">我的个人主页</button>
+        </div>
+        <section id="my-following-panel" class="stack" hidden>
+            <h3>我的关注</h3>
+            <div id="my-following-list" class="stack" aria-live="polite"></div>
+        </section>
         <div id="my-reviews-list" class="stack" aria-live="polite"></div>
     </div>
 </div>
@@ -576,6 +603,7 @@
         <button type="button" class="icon-btn modal-close" data-close-modal aria-label="关闭">×</button>
         <div class="modal-head"><h2 id="feedback-title">问题反馈</h2></div>
         <form id="feedback-form" class="stack">
+            <p class="muted" id="feedback-stall-context" hidden></p>
             <label class="field" id="feedback-name-field" hidden><span id="feedback-name-label">档口名称</span><input name="name" maxlength="100"></label>
             <label class="field" id="feedback-building-field" hidden><span id="feedback-location-label">所在位置</span><select name="building"></select></label>
             <label class="field" id="feedback-custom-location-field" hidden><span>填写所在位置</span><input name="customLocation" maxlength="100" placeholder="例如：某食堂旁、某楼一层"></label>
@@ -643,6 +671,6 @@
         </div>
     </div>
 </div>
-<script src="app.js?v=food-press-buttons" defer></script>
+<script src="app.js?v=admin-accounts" defer></script>
 </body>
 </html>

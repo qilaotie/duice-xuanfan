@@ -98,6 +98,18 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(review["photo_urls"]), 2)
         path = "/api/ratings/" + str(review["id"])
         vote_path = path + "/vote"
+        follow = "/api/users/2/follow"
+        self.api("GET", "/api/my/following", 401)
+        self.api("PUT", follow, 400, token=token)
+        self.api("PUT", "/api/users/999/follow", 404, token="other-token")
+        for _ in range(2):
+            self.api("PUT", follow, 200, token="other-token")
+        self.assertEqual(len(self.api("GET", "/api/my/following", 200, token="other-token")), 1)
+        self.assertTrue(self.api("GET", "/api/users/2", 200, token="other-token")["following"])
+        self.api("DELETE", follow, 200, token="other-token")
+        self.assertEqual(self.api("GET", "/api/my/following", 200, token="other-token"), [])
+        self.api("PUT", vote_path, 200, token="other-token", data={"vote": 1})
+        self.assertEqual(self.api("GET", "/api/users/2", 200)["likes_received"], 1)
         self.api("PUT", vote_path, 401, data={"vote": 1})
         self.api("PUT", vote_path, 400, token="other-token", data={"vote": True})
         for vote, likes, dislikes in ((1, 1, 0), (-1, 0, 1), (0, 0, 0)):
@@ -139,6 +151,19 @@ class ApiTests(unittest.TestCase):
         self.api("DELETE", path, 200, token=token)
         self.api("PUT", vote_path, 404, token="other-token", data={"vote": 1})
         self.api("GET", second, 404)
+
+    def test_primary_admin_revokes_maintenance_session(self):
+        db.session.get(User, 2).is_admin = True
+        db.session.commit()
+        path = "/api/admin/administrators"
+        self.api("GET", path, 403, token="member-token")
+        self.api("DELETE", path + "/2", 403, token="member-token")
+        self.admin("DELETE", "administrators/1", 404)
+        self.assertEqual(self.admin("GET", "administrators", 200)[0]["id"], 2)
+        self.admin("DELETE", "administrators/2", 200)
+        self.api("GET", "/api/profile", 401, token="member-token")
+        self.api("GET", "/api/admin/categories", 403, token="member-token")
+        self.assertEqual(self.admin("GET", "administrators", 200), [])
 
     def test_admin_workflows(self):
         self.api("POST", "/api/admin/food-types", 403, token="member-token", data={"name": "烧烤"})

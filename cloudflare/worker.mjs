@@ -138,7 +138,7 @@ async function route(request, env) {
                 user.nickname, user.taste, user.birthplace, user.id).run();
         }
         const avatar = await first('SELECT avatar IS NOT NULL has_avatar FROM users WHERE id=?', user.id);
-        return json({ nickname: user.nickname, taste: user.taste, birthplace: user.birthplace,
+        return json({ id: user.id, nickname: user.nickname, taste: user.taste, birthplace: user.birthplace,
             avatar_url: avatar.has_avatar ? `/api/avatars/${user.id}` : null });
     }
 
@@ -158,6 +158,25 @@ async function route(request, env) {
         return new Response(new Uint8Array(row.avatar), { headers: { 'Content-Type': 'image/jpeg', 'X-Content-Type-Options': 'nosniff' } });
     }
 
+    if (method === 'GET' && path === '/api/my/following') {
+        const user = auth();
+        if (user.username.startsWith('__guest_')) fail(403, '请先登录账号');
+        return json(await all(`SELECT u.id, u.nickname FROM user_follows f
+            JOIN users u ON u.id=f.followed_id WHERE f.follower_id=? ORDER BY f.rowid DESC`, user.id));
+    }
+
+    const followMatch = /^\/api\/users\/(\d+)\/follow$/.exec(path);
+    if (followMatch && ['PUT', 'DELETE'].includes(method)) {
+        const user = auth();
+        const id = Number(followMatch[1]);
+        if (user.username.startsWith('__guest_')) fail(403, '请先登录账号');
+        if (id === user.id) fail(400, '不能关注自己');
+        if (!await first("SELECT id FROM users WHERE id=? AND substr(username,1,8)<>'__guest_'", id)) fail(404, '用户不存在');
+        if (method === 'PUT') await q('INSERT OR IGNORE INTO user_follows VALUES (?,?)', user.id, id).run();
+        else await q('DELETE FROM user_follows WHERE follower_id=? AND followed_id=?', user.id, id).run();
+        return json({ following: method === 'PUT' });
+    }
+
     const profileMatch = /^\/api\/users\/(\d+)$/.exec(path);
     if (method === 'GET' && profileMatch) {
         const id = Number(profileMatch[1]);
@@ -168,7 +187,11 @@ async function route(request, env) {
             r.dish_name,r.dish_scores,substr(r.created_at,1,16) created_at
             FROM ratings r JOIN canteens c ON c.id=r.canteen_id
             WHERE r.user_id=? AND r.is_deleted=0 AND r.is_anonymous=0 ORDER BY r.created_at DESC,r.id DESC`, id);
-        return json({ ...profile, avatar_url: profile.has_avatar ? `/api/avatars/${id}` : null,
+        const likes = await first(`SELECT COUNT(*) total FROM review_votes v JOIN ratings r ON r.id=v.rating_id
+            WHERE r.user_id=? AND r.is_deleted=0 AND r.is_anonymous=0 AND v.vote=1`, id);
+        const following = viewer && await first('SELECT 1 FROM user_follows WHERE follower_id=? AND followed_id=?', viewer.id, id);
+        return json({ ...profile, likes_received: likes.total, following: Boolean(following), is_self: viewer?.id === id,
+            avatar_url: profile.has_avatar ? `/api/avatars/${id}` : null,
             reviews: rows.map(row => ({ ...row, dish_scores: decodeScores(row.dish_scores) })) });
     }
 

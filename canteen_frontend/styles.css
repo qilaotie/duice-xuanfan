@@ -411,6 +411,33 @@ a {
     font-size: 15px;
 }
 
+.random-food-picker {
+    margin-top: 12px;
+    border-color: rgba(255, 255, 255, .3);
+    background: rgba(255, 255, 255, .09);
+}
+
+.random-food-picker .sort-control {
+    margin-top: 8px;
+    color: inherit;
+}
+
+.random-food-picker select { width: auto; max-width: 100%; }
+
+.random-food-result {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 16px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, .14);
+}
+.random-food-result strong, .random-food-result span { display: block; }
+.random-food-result span { margin-top: 3px; font-size: 12px; }
+
 .hero-actions {
     display: flex;
     flex-wrap: wrap;
@@ -1133,10 +1160,10 @@ a {
     overflow-wrap: anywhere;
 }
 .food-choice[aria-pressed="true"], .food-choice:active {
-    background: #d9ede7;
-    border-color: #8bb9ab;
-    color: #124d43;
-    box-shadow: inset 0 2px 5px #163f3440, inset 0 -1px 2px #ffffffa0;
+    background: #0b5147;
+    border-color: #a4d5c8;
+    color: #fff;
+    box-shadow: inset 0 3px 6px #052d27b0, inset 0 -1px 2px #ffffff35;
 }
 .food-choice:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
@@ -2635,10 +2662,17 @@ button.comment-avatar { cursor: pointer; }
 
     .list-toolbar {
         align-items: center;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
         gap: 8px;
         margin-bottom: 10px;
     }
+
+    .list-toolbar > .food-picker {
+        flex: 0 0 100%;
+        min-width: 0;
+    }
+
+    #rated-toggle { white-space: nowrap; }
 
     .toolbar-left {
         flex: 1 1 auto;

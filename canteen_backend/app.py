@@ -407,7 +407,7 @@ def profile():
         except ValueError as exc:
             return jsonify({"msg": str(exc)}), 400
         db.session.commit()
-    return jsonify({"nickname": user.nickname, "taste": user.taste, "birthplace": user.birthplace,
+    return jsonify({"id": user.id, "nickname": user.nickname, "taste": user.taste, "birthplace": user.birthplace,
                     "avatar_url": url_for("get_avatar", user_id=user.id) if user.has_avatar else None})
 
 
@@ -439,16 +439,51 @@ def get_avatar(user_id):
     return send_file(BytesIO(user.avatar), mimetype="image/jpeg", max_age=0)
 
 
+@app.get("/api/my/following")
+def my_following():
+    viewer = get_current_user()
+    if not viewer or viewer.username.startswith("__guest_"):
+        return jsonify({"msg": "请先登录账号"}), 401 if not viewer else 403
+    rows = db.session.execute(text("""SELECT u.id,u.nickname FROM user_follows f
+        JOIN users u ON u.id=f.followed_id WHERE f.follower_id=:id ORDER BY f.rowid DESC"""),
+        {"id": viewer.id}).mappings()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.route("/api/users/<int:user_id>/follow", methods=["PUT", "DELETE"])
+def follow_user(user_id):
+    viewer = get_current_user()
+    if not viewer or viewer.username.startswith("__guest_"):
+        return jsonify({"msg": "请先登录账号"}), 401 if not viewer else 403
+    if user_id == viewer.id:
+        return jsonify({"msg": "不能关注自己"}), 400
+    target = db.session.get(User, user_id)
+    if not target or target.username.startswith("__guest_"):
+        return jsonify({"msg": "用户不存在"}), 404
+    following = request.method == "PUT"
+    sql = ("INSERT OR IGNORE INTO user_follows VALUES (:viewer,:target)" if following else
+           "DELETE FROM user_follows WHERE follower_id=:viewer AND followed_id=:target")
+    db.session.execute(text(sql), {"viewer": viewer.id, "target": user_id})
+    db.session.commit()
+    return jsonify({"following": following})
+
+
 @app.route("/api/users/<int:user_id>")
 def public_profile(user_id):
     user = db.session.get(User, user_id)
     if not user or user.username.startswith("__guest_"):
         abort(404)
+    viewer = get_current_user()
+    likes = db.session.execute(text("""SELECT COUNT(*) FROM review_votes v JOIN ratings r ON r.id=v.rating_id
+        WHERE r.user_id=:id AND r.is_deleted=0 AND r.is_anonymous=0 AND v.vote=1"""), {"id": user_id}).scalar()
+    following = db.session.execute(text("SELECT 1 FROM user_follows WHERE follower_id=:viewer AND followed_id=:id"),
+                                   {"viewer": viewer.id if viewer else None, "id": user_id}).scalar()
     rows = db.session.query(Rating, Canteen.name).join(Canteen, Rating.canteen_id == Canteen.id).filter(
         Rating.user_id == user_id, Rating.is_deleted.is_(False), Rating.is_anonymous.is_(False)
     ).order_by(Rating.created_at.desc(), Rating.id.desc()).all()
     return jsonify({
         "nickname": user.nickname, "taste": user.taste, "birthplace": user.birthplace,
+        "likes_received": likes, "following": bool(following), "is_self": bool(viewer and viewer.id == user_id),
         "avatar_url": url_for("get_avatar", user_id=user.id) if user.has_avatar else None,
         "reviews": [{
             "id": rating.id, "canteen_id": rating.canteen_id, "canteen_name": name,
@@ -1134,6 +1169,28 @@ def set_stall_food_types(canteen_id):
     return jsonify({"msg": "操作成功"})
 
 
+@app.get("/api/admin/administrators")
+@app.delete("/api/admin/administrators/<int:user_id>")
+def manage_administrators(user_id=None):
+    viewer, resp, code = require_admin()
+    if resp:
+        return resp, code
+    if viewer.username != "admin":
+        return jsonify({"msg": "仅主管理员可以管理管理员账号"}), 403
+    accounts = User.query.filter(User.is_admin.is_(True), User.username != "admin")
+    if user_id is None:
+        return jsonify([{"id": user.id, "username": user.username, "nickname": user.nickname}
+                        for user in accounts.order_by(User.username)])
+    result = db.session.execute(text("""UPDATE users SET is_admin=0,token=NULL
+        WHERE id=:id AND is_admin=1 AND username<>'admin' RETURNING username"""), {"id": user_id}).first()
+    if not result:
+        db.session.rollback()
+        return jsonify({"msg": "没有可撤销的管理员账号"}), 404
+    log_admin_action(viewer, "revoke_admin", "user", user_id, details=result.username)
+    db.session.commit()
+    return jsonify({"msg": "操作成功"})
+
+
 # ========= 管理员接口 =========
 
 @app.route("/api/admin/reports", methods=["GET"])
@@ -1730,6 +1787,8 @@ def init_database():
         new_label_catalog = not inspect(db.engine).has_table("review_labels")
         db.create_all()
         ensure_db_schema()
+        follows = Path(BASE_DIR).parent / "cloudflare" / "migrations" / "0011_user_follows.sql"
+        db.session.execute(text(follows.read_text(encoding="utf-8")))
         if not inspect(db.engine).has_table("food_types"):
             migration = Path(BASE_DIR).parent / "cloudflare" / "migrations" / "0010_food_types.sql"
             for statement in migration.read_text(encoding="utf-8").split(";"):

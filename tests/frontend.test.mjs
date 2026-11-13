@@ -111,6 +111,34 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         });
         assert.equal(admin.status(), 403);
     });
+    await scenario('SOCIAL-01 follow a reviewer and find their profile again', async page => {
+        const base = new URL(page.url()).origin;
+        const password = 'test-social-password';
+        const register = async username => (await page.request.post(base + '/api/register', {
+            data: {username, password, confirm_password: password}
+        })).json();
+        const author = await register('social-author');
+        const viewer = await register('social-viewer');
+        const review = await page.request.post(base + '/api/ratings', {
+            headers: {Authorization: 'Bearer ' + author.token},
+            data: {canteen_id: 4, score: 5, comment: '关注测试评价'}
+        });
+        assert.equal(review.status(), 200);
+        await page.evaluate(token => localStorage.setItem('token', 'Bearer ' + token), viewer.token);
+        await page.goto(base + '/?social=1#/stalls/4');
+        await page.locator('#detail-content .comment-user[data-action="open-public-profile"]').first().click();
+        const profile = page.locator('#public-profile-modal');
+        await profile.getByRole('button', {name: '关注', exact: true}).click();
+        await profile.getByRole('button', {name: '取消关注'}).waitFor();
+        await profile.getByRole('button', {name: '关闭', exact: true}).click();
+        await page.locator('#detail-modal .detail-close').click();
+        await page.locator('#my-reviews-btn').click();
+        await page.getByRole('button', {name: '我的关注'}).click();
+        await page.locator('#my-following-list button').click();
+        await profile.getByText('关注测试评价').waitFor();
+        await profile.getByRole('button', {name: '取消关注'}).click();
+        await profile.getByRole('button', {name: '关注', exact: true}).waitFor();
+    });
     await scenario('RANK-01 ranking scope, order and minimum review count', async page => {
         await page.route('**/api/stalls/ranking', route => route.fulfill({json: [
             {id: 3, name: '竹园面馆', category_name: '竹园一层餐厅', avg_score: 5, rating_count: 1},
@@ -226,6 +254,9 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await page.locator('#auth-password').fill('test-admin-password');
         await page.locator('#auth-submit').click();
         await page.locator('[data-nav="admin"]').click();
+        await page.locator('[data-admin-tab="administrators"]').click();
+        await page.getByText('暂无其他管理员账号。', {exact: true}).waitFor();
+        await page.locator('[data-admin-tab="categories"]').click();
         const row = page.locator('#admin-category-list .admin-row').filter({ hasText: '测试食堂' });
         await row.locator('[data-action="edit-category"]').click();
         await row.locator('input').fill('改名测试食堂');
@@ -234,12 +265,17 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await page.locator('[data-admin-tab="feedback"]').click();
         await page.getByText('暂无反馈。').waitFor();
         await page.locator('button[data-nav="stalls"]').click();
-        await page.locator('[data-action="feedback-issue"]').click();
+        await page.locator('#canteen-grid [data-action="open-detail"][data-id="1"]').click();
+        await page.locator('#detail-content [data-action="feedback-stall-issue"]').click();
+        assert.match(await page.locator('#feedback-stall-context').innerText(), /测试面馆.*ID 1/);
         await page.locator('#feedback-form textarea').fill('浏览器测试反馈');
         await page.locator('#feedback-form button[type=submit]').click();
         await page.getByText('反馈已提交，感谢！').waitFor();
+        await page.locator('#detail-modal .detail-close').click();
         await page.locator('[data-nav="admin"]').click();
-        await page.locator('#admin-feedback-list').getByText('浏览器测试反馈').waitFor();
+        const issue = page.locator('#admin-feedback-list article').filter({hasText: '浏览器测试反馈'});
+        await issue.waitFor();
+        assert.match(await issue.innerText(), /测试面馆.*ID 1/);
         await page.locator('button[data-nav="stalls"]').click();
         await page.locator('[data-action="feedback-stall"]').click();
         await page.locator('#feedback-form input[name="name"]').fill('测试忽略档口');
@@ -394,6 +430,44 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await page.locator('#rating-modal').waitFor({ state: 'visible' });
     });
     await scenario('LAYOUT-01 compact mobile headings and viewport', async page => {
+        await page.setViewportSize({width: 320, height: 780});
+        const recommendationTypes = page.locator('#random-food-type');
+        await recommendationTypes.locator('summary').click();
+        await recommendationTypes.locator('button[value="noodles"]').click();
+        await recommendationTypes.locator('button[value="drinks"]').click();
+        const dining = recommendationTypes.locator('#random-food-dining');
+        await dining.selectOption('东区');
+        await page.getByRole('button', {name: '随机推荐'}).click();
+        assert.equal(await page.locator('#random-food-result button').getAttribute('data-id'), '7');
+        await dining.selectOption('竹园');
+        await page.getByRole('button', {name: '随机推荐'}).click();
+        assert.equal(await page.locator('#random-food-result button').getAttribute('data-id'), '3');
+        await dining.selectOption('');
+        const random = page.getByRole('button', {name: '随机推荐'});
+        await random.click();
+        const result = page.locator('#random-food-result');
+        const detail = result.getByRole('button', {name: '查看档口'});
+        const first = await detail.getAttribute('data-id');
+        assert.ok(['1', '3', '7'].includes(first));
+        await page.getByRole('button', {name: '换一个'}).click();
+        const next = await detail.getAttribute('data-id');
+        assert.ok(['1', '3', '7'].includes(next));
+        assert.notEqual(next, first);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        await detail.click();
+        await page.waitForURL(new RegExp('#/stalls/' + next + '$'));
+        await page.locator('#detail-modal .detail-close').click();
+        const picker = page.locator('#stall-food-type');
+        await picker.locator('summary').click();
+        for (const width of [320, 390, 414, 520]) {
+            await page.setViewportSize({width, height: 844});
+            const panel = await picker.boundingBox();
+            const rated = await page.locator('#rated-toggle').boundingBox();
+            const sort = await page.locator('#sort-select').boundingBox();
+            assert.ok(rated.y >= panel.y + panel.height && sort.y >= panel.y + panel.height);
+            assert.ok(sort.x + sort.width <= width);
+            assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        }
         await page.setViewportSize({ width: 390, height: 844 });
         for (const view of ['campus', 'forum', 'ranking']) {
             await page.locator('[data-nav="' + view + '"]').click();
