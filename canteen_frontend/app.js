@@ -17,7 +17,7 @@
         diningCampusFilter: '',
         search: '',
         ratedOnly: false,
-        foodType: '',
+        foodType: [],
         sort: 'number',
         expandedCategories: new Set(),
         detailId: null,
@@ -91,7 +91,7 @@
     }
 
     function matchesFoodType(stall, type) {
-        return !type || stallFoodTypes(stall).some(({id}) => id === type);
+        return !type.length || stallFoodTypes(stall).some(({id}) => type.includes(id));
     }
 
     async function loadFoodTypes() {
@@ -105,14 +105,25 @@
         }
     }
 
+    function selectedFoodTypes(picker) {
+        return $$('.food-choice[aria-pressed="true"]', picker).map(button => button.value);
+    }
+
+    function updateFoodPickerSummary(picker) {
+        const count = selectedFoodTypes(picker).length;
+        $('summary', picker).textContent = count ? `餐饮分类（已选 ${count} 项）` : '餐饮分类（全部）';
+    }
+
     function updateFoodTypeOptions() {
         const types = foodTypes();
-        if (!types.some(({id}) => id === state.foodType)) state.foodType = '';
+        state.foodType = state.foodType.filter(id => types.some(type => type.id === id));
         for (const selector of ['#stall-food-type', '#ranking-food-type']) {
-            const select = $(selector);
-            const previous = select.value;
-            select.replaceChildren(new Option('全部分类', ''), ...types.map(({id, name}) => new Option(name, id)));
-            if (types.some(({id}) => id === previous)) select.value = previous;
+            const picker = $(selector);
+            const previous = selector === '#stall-food-type' ? state.foodType : selectedFoodTypes(picker);
+            $('.food-picker-options', picker).innerHTML = types.map(({id, name}) =>
+                `<button type="button" class="food-choice" value="${escapeHtml(id)}" aria-pressed="${previous.includes(id)}">${escapeHtml(name)}</button>`
+            ).join('');
+            updateFoodPickerSummary(picker);
         }
     }
     const beijingTimeFormat = new Intl.DateTimeFormat('zh-CN', {
@@ -182,7 +193,7 @@
             if (state.diningCampusFilter) query.set('campus', state.diningCampusFilter);
             if (state.search) query.set('q', state.search);
             if (state.ratedOnly) query.set('rated', '1');
-            if (state.foodType) query.set('food', state.foodType);
+            for (const type of state.foodType) query.append('food', type);
             if (state.sort !== 'number') query.set('sort', state.sort);
         } else if (state.view === 'campus') {
             if (campusLocationFilter) query.set('location', campusLocationFilter);
@@ -268,8 +279,7 @@
         state.diningCampusFilter = listUrl.searchParams.get('campus') || '';
         state.search = listUrl.searchParams.get('q') || '';
         state.ratedOnly = listUrl.searchParams.get('rated') === '1';
-        const foodType = listUrl.searchParams.get('food');
-        state.foodType = foodTypes().some(({id}) => id === foodType) ? foodType : '';
+        state.foodType = [...new Set(listUrl.searchParams.getAll('food'))].filter(id => foodTypes().some(type => type.id === id));
         state.sort = ['number', 'score', 'reviews', 'name'].includes(listUrl.searchParams.get('sort')) ? listUrl.searchParams.get('sort') : 'number';
         state.expandedCategories = new Set(snapshot?.expanded || []);
         $('#search-input').value = state.search;
@@ -1126,7 +1136,9 @@
     }
 
     function updateListToolbar(single, searching) {
-        $('#stall-food-type').value = state.foodType;
+        const picker = $('#stall-food-type');
+        $$('.food-choice', picker).forEach(button => button.setAttribute('aria-pressed', String(state.foodType.includes(button.value))));
+        updateFoodPickerSummary(picker);
         const rated = $('#rated-toggle');
         if (rated) {
             rated.classList.toggle('is-active', state.ratedOnly);
@@ -1214,7 +1226,7 @@
             if (average) parts.push(`均分 ${average}`);
         }
         if (state.ratedOnly) parts.push('只看有评分');
-        if (state.foodType) parts.push(foodTypes().find(({id}) => id === state.foodType)?.name);
+        if (state.foodType.length) parts.push(foodTypes().filter(({id}) => state.foodType.includes(id)).map(({name}) => name).join('、'));
         if (state.search) parts.push(`搜索「${state.search}」`);
         subtitle.textContent = parts.join(' · ');
     }
@@ -1260,7 +1272,7 @@
         state.diningGroupFilter = '';
         state.diningCampusFilter = '';
         state.ratedOnly = false;
-        state.foodType = '';
+        state.foodType = [];
         state.expandedCategories.clear();
         const input = $('#search-input');
         if (input) input.value = '';
@@ -1296,7 +1308,7 @@
 
         const scope = $('#ranking-scope');
         const order = $('#ranking-order').value;
-        const foodType = $('#ranking-food-type').value;
+        const foodType = selectedFoodTypes($('#ranking-food-type'));
         const minimum = Number($('#ranking-min').value);
         const locations = rankingLocations();
         const selected = scope.value;
@@ -3474,10 +3486,28 @@
 
         $$('.ranking-filters select').forEach(select => select.addEventListener('change', renderRanking));
         updateFoodTypeOptions();
-        $('#stall-food-type').addEventListener('change', event => {
-            state.foodType = event.target.value;
-            renderCanteenGrid();
-        });
+        for (const selector of ['#stall-food-type', '#ranking-food-type']) {
+            const picker = $(selector);
+            const apply = () => {
+                updateFoodPickerSummary(picker);
+                if (selector === '#stall-food-type') {
+                    state.foodType = selectedFoodTypes(picker);
+                    renderCanteenGrid();
+                } else {
+                    renderRanking();
+                }
+            };
+            picker.addEventListener('click', event => {
+                const button = event.target.closest('.food-choice, .food-picker-clear');
+                if (!button) return;
+                if (button.matches('.food-choice')) {
+                    button.setAttribute('aria-pressed', String(button.getAttribute('aria-pressed') !== 'true'));
+                } else {
+                    $$('.food-choice', picker).forEach(choice => choice.setAttribute('aria-pressed', 'false'));
+                }
+                apply();
+            });
+        }
 
         const ratingForm = $('#rating-form');
         if (ratingForm) ratingForm.addEventListener('submit', submitRating);

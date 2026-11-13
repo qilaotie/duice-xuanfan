@@ -136,16 +136,27 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await page.getByText('没有符合条件的档口').waitFor();
         await page.locator('#ranking-min').selectOption('1');
         await page.locator('#ranking-scope').selectOption('');
-        await page.locator('#ranking-food-type').selectOption('drinks');
+        const rankTypes = page.locator('#ranking-food-type');
+        await rankTypes.locator('summary').click();
+        await rankTypes.locator('button[value="drinks"]').click();
         assert.deepEqual(await names.allTextContents(), ['西军电咖啡']);
+        await rankTypes.locator('button[value="noodles"]').click();
+        assert.deepEqual(await names.allTextContents(), ['西军电咖啡', '竹园面馆']);
+        await rankTypes.getByRole('button', {name: '清空选择'}).click();
+        assert.equal(await names.count(), 3);
         await page.locator('button[data-nav="stalls"]').click();
-        await page.locator('#stall-food-type').selectOption('noodles');
+        const stallTypes = page.locator('#stall-food-type');
+        await stallTypes.locator('summary').click();
+        await stallTypes.locator('button[value="noodles"]').click();
         await page.waitForURL(/food=noodles/);
         await page.locator('#canteen-grid [data-action="open-detail"][data-id="3"]').waitFor();
         assert.equal(await page.locator('#canteen-grid [data-action="open-detail"][data-id="7"]').count(), 0);
+        await stallTypes.locator('button[value="drinks"]').click();
+        await page.waitForURL(/food=noodles&food=drinks/);
         await page.reload();
         await page.locator('#canteen-grid [data-action="open-detail"][data-id="3"]').waitFor();
-        assert.equal(await page.locator('#stall-food-type').inputValue(), 'noodles');
+        assert.equal(await stallTypes.locator('.food-choice[aria-pressed="true"]').count(), 2);
+        assert.equal(await page.locator('#canteen-grid [data-action="open-detail"][data-id="7"]').count(), 1);
     });
     await scenario('UI-01 campus search and empty results', async page => {
         await page.locator('[data-nav="campus"]').click();
@@ -294,7 +305,8 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await type.locator('summary').first().click();
         await type.locator('[data-action="open-detail"][data-id="1"]').waitFor();
         await page.locator('button[data-nav="stalls"]').click();
-        await page.locator('#stall-food-type').selectOption(typeId);
+        await page.locator('#stall-food-type summary').click();
+        await page.locator(`#stall-food-type button[value="${typeId}"]`).click();
         await page.locator('#canteen-grid [data-action="open-detail"][data-id="1"]').waitFor();
     });
     await scenario('ROUTE-01 detail refresh, return filters and browser history', async page => {

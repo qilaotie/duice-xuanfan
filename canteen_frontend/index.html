@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=ranking-filters">
+    <link rel="stylesheet" href="styles.css?v=food-press-buttons">
 </head>
 <body>
 <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -109,7 +109,11 @@
                 </div>
 
                 <div class="list-toolbar" id="list-toolbar">
-                    <label class="sort-control">餐饮分类 <select id="stall-food-type" aria-label="档口餐饮分类"></select></label>
+                    <details class="food-picker" id="stall-food-type">
+                        <summary>餐饮分类（全部）</summary>
+                        <div class="food-picker-options" role="group" aria-label="餐饮分类，可多选"></div>
+                        <button type="button" class="btn btn-ghost btn-sm food-picker-clear">清空选择</button>
+                    </details>
                     <div class="toolbar-left">
                         <button type="button" class="chip" id="rated-toggle" data-action="toggle-rated" aria-pressed="false">只看有评分</button>
                         <button type="button" class="chip" id="expand-all" data-action="expand-all">全部展开</button>
@@ -183,7 +187,11 @@
             <p>按校区、食堂或楼层找档口，只统计有效评价。</p>
         </div>
         <div class="card ranking-filters">
-            <label>餐饮分类 <select id="ranking-food-type" aria-label="排行榜餐饮分类"></select></label>
+            <details class="food-picker" id="ranking-food-type">
+                        <summary>餐饮分类（全部）</summary>
+                        <div class="food-picker-options" role="group" aria-label="餐饮分类，可多选"></div>
+                        <button type="button" class="btn btn-ghost btn-sm food-picker-clear">清空选择</button>
+                    </details>
             <label>范围 <select id="ranking-scope"><option value="">全部食堂</option></select></label>
             <label>排序 <select id="ranking-order">
                 <option value="score">评分最高</option><option value="count">评价最多</option>
@@ -635,6 +643,6 @@
         </div>
     </div>
 </div>
-<script src="app.js?v=food-type-members" defer></script>
+<script src="app.js?v=food-press-buttons" defer></script>
 </body>
 </html>
