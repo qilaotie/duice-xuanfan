@@ -2433,6 +2433,7 @@
         $('#rating-anonymous').checked = Boolean(review?.is_anonymous);
         clearError($('#rating-error'));
         openModal($('#rating-modal'));
+        $('.rating-dialog-body').scrollTop = 0;
     }
 
     async function openMyReviews() {

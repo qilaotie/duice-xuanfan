@@ -1754,7 +1754,7 @@ textarea {
     animation: popIn .26s cubic-bezier(.2, .8, .2, 1) both;
 }
 
-#my-reviews-modal, #public-profile-modal {
+#my-reviews-modal, #public-profile-modal, #rating-modal {
     align-items: safe center;
 }
 
@@ -1781,6 +1781,26 @@ textarea {
     min-height: 0;
     overflow: auto;
     overscroll-behavior: contain;
+}
+
+.rating-dialog #rating-form {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.rating-dialog-body {
+    padding: 4px 4px 12px;
+}
+
+.rating-dialog-body > p {
+    margin: 0;
+}
+
+.rating-dialog-footer {
+    flex: none;
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
 }
 
 .icon-btn {

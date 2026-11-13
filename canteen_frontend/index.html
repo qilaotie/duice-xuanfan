@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=profile-scroll">
+    <link rel="stylesheet" href="styles.css?v=rating-scroll">
 </head>
 <body>
 <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -435,14 +435,14 @@
 <!-- ======== 写评价 ======== -->
 <div class="modal" id="rating-modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-modal></div>
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="rating-title">
+    <div class="modal-card profile-dialog rating-dialog" role="dialog" aria-modal="true" aria-labelledby="rating-title">
         <button type="button" class="icon-btn modal-close" data-close-modal aria-label="关闭">×</button>
         <div class="modal-head">
-            <span class="modal-icon">★</span>
             <h2 id="rating-title">写一条评价</h2>
-            <p>无需登录也可以评价。访客可在当前浏览器查看和管理自己的评价。</p>
         </div>
-        <form id="rating-form" class="stack">
+        <form id="rating-form">
+          <div class="profile-dialog-body stack rating-dialog-body">
+            <p class="muted">无需登录也可以评价。访客可在当前浏览器查看和管理自己的评价。</p>
             <div id="rating-target-summary" class="rating-target-summary" hidden></div>
             <div class="field-row" id="rating-location-fields">
                 <label class="field">
@@ -511,8 +511,11 @@
             <label id="rating-anonymous-field" hidden>
                 <input type="checkbox" id="rating-anonymous"> 匿名评价（这条评价不会显示在个人主页）
             </label>
-            <p class="form-error" id="rating-error" hidden></p>
+          </div>
+          <div class="rating-dialog-footer stack">
+            <p class="form-error" id="rating-error" role="alert" hidden></p>
             <button type="submit" class="btn btn-primary btn-block" id="rating-submit">提交评价</button>
+          </div>
         </form>
     </div>
 </div>

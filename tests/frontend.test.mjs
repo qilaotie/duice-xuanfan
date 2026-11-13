@@ -530,6 +530,30 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await viewer.waitFor({ state: 'hidden' });
         await page.locator('#rating-modal').waitFor({ state: 'visible' });
     });
+    await scenario('RATING-UI-01 long mobile review keeps close and submit visible', async page => {
+        await page.setViewportSize({width: 360, height: 480});
+        await page.locator('#canteen-grid [data-action="open-detail"][data-id="1"]').click();
+        await page.locator('#detail-content [data-action="open-rating"]').click();
+        const dialog = page.locator('#rating-modal');
+        const close = dialog.getByRole('button', {name: '关闭', exact: true});
+        const submit = dialog.getByRole('button', {name: '提交评价'});
+        await dialog.locator('#rating-dishes-extra summary').click();
+        await dialog.locator('#rating-photos-extra').evaluate(details => details.open = true);
+        const body = dialog.locator('.rating-dialog-body');
+        for (const bottom of [false, true]) {
+            const scrolled = await body.evaluate((element, bottom) => {
+                element.scrollTop = bottom ? element.scrollHeight : 0;
+                return element.scrollTop;
+            }, bottom);
+            if (bottom) assert.ok(scrolled > 0);
+            for (const button of [close, submit]) {
+                const bounds = await button.boundingBox();
+                assert.ok(bounds.y >= 0 && bounds.y + bounds.height <= 480);
+            }
+        }
+        await close.click();
+        await dialog.waitFor({state: 'hidden'});
+    });
     await scenario('LAYOUT-01 compact mobile headings and viewport', async page => {
         await page.setViewportSize({width: 320, height: 780});
         const recommendationTypes = page.locator('#random-food-type');
