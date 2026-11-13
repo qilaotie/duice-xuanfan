@@ -1754,6 +1754,35 @@ textarea {
     animation: popIn .26s cubic-bezier(.2, .8, .2, 1) both;
 }
 
+#my-reviews-modal, #public-profile-modal {
+    align-items: safe center;
+}
+
+.modal-card.profile-dialog {
+    display: flex;
+    flex-direction: column;
+    max-height: 100%;
+    max-height: min(100%, calc(100dvh - 40px));
+    overflow: hidden;
+}
+
+.profile-dialog > .modal-head {
+    flex: none;
+    padding-right: 44px;
+    overflow-wrap: anywhere;
+}
+
+.profile-dialog > .modal-close {
+    width: 44px;
+    height: 44px;
+}
+
+.profile-dialog-body {
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+}
+
 .icon-btn {
     display: grid;
     place-items: center;

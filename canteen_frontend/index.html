@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=social-profile">
+    <link rel="stylesheet" href="styles.css?v=profile-scroll">
 </head>
 <body>
 <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -574,32 +574,36 @@
 </div>
 <div class="modal" id="my-reviews-modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-modal></div>
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="my-reviews-title">
+    <div class="modal-card profile-dialog" role="dialog" aria-modal="true" aria-labelledby="my-reviews-title">
         <button type="button" class="icon-btn modal-close" data-close-modal aria-label="关闭">×</button>
         <div class="modal-head"><h2 id="my-reviews-title">我的</h2></div>
-        <div class="feedback-review-actions" id="my-social-actions" hidden>
-            <button type="button" class="btn btn-soft btn-sm" data-action="my-reviews" aria-pressed="true">我的评价</button>
-            <button type="button" class="btn btn-ghost btn-sm" data-action="my-following" aria-pressed="false">我的关注</button>
-            <button type="button" class="btn btn-ghost btn-sm" data-action="my-public-profile" aria-pressed="false">我的个人主页</button>
-        </div>
-        <section id="my-following-panel" class="stack" hidden>
-            <div class="follow-switch" aria-label="关注关系" role="group">
-                <button type="button" class="btn btn-soft btn-sm" data-action="follow-list" data-list="following">我关注的人</button>
-                <button type="button" class="btn btn-ghost btn-sm" data-action="follow-list" data-list="followers">关注我的人</button>
+        <div class="profile-dialog-body">
+            <div class="feedback-review-actions" id="my-social-actions" hidden>
+                <button type="button" class="btn btn-soft btn-sm" data-action="my-reviews" aria-pressed="true">我的评价</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-action="my-following" aria-pressed="false">我的关注</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-action="my-public-profile" aria-pressed="false">我的个人主页</button>
             </div>
-            <div id="my-following-list" class="stack" aria-live="polite"></div>
-        </section>
-        <div id="my-profile-panel" class="stack" aria-live="polite" hidden></div>
-        <div id="my-reviews-list" class="stack" aria-live="polite"></div>
+            <section id="my-following-panel" class="stack" hidden>
+                <div class="follow-switch" aria-label="关注关系" role="group">
+                    <button type="button" class="btn btn-soft btn-sm" data-action="follow-list" data-list="following">我关注的人</button>
+                    <button type="button" class="btn btn-ghost btn-sm" data-action="follow-list" data-list="followers">关注我的人</button>
+                </div>
+                <div id="my-following-list" class="stack" aria-live="polite"></div>
+            </section>
+            <div id="my-profile-panel" class="stack" aria-live="polite" hidden></div>
+            <div id="my-reviews-list" class="stack" aria-live="polite"></div>
+        </div>
     </div>
 </div>
 <script src="config.js" defer></script>
 <div class="modal" id="public-profile-modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-modal></div>
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="public-profile-title">
+    <div class="modal-card profile-dialog" role="dialog" aria-modal="true" aria-labelledby="public-profile-title">
         <button type="button" class="icon-btn modal-close" data-close-modal aria-label="关闭">×</button>
         <div class="modal-head"><h2 id="public-profile-title">个人资料</h2></div>
-        <div id="public-profile-content" class="stack" aria-live="polite"></div>
+        <div class="profile-dialog-body">
+            <div id="public-profile-content" class="stack" aria-live="polite"></div>
+        </div>
     </div>
 </div>
 <div class="modal" id="feedback-modal" aria-hidden="true">

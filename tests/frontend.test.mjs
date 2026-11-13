@@ -112,6 +112,7 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         assert.equal(admin.status(), 403);
     });
     await scenario('SOCIAL-01 follow a reviewer and find their profile again', async page => {
+        await page.emulateMedia({ reducedMotion: 'reduce' });
         const base = new URL(page.url()).origin;
         const password = 'test-social-password';
         const register = async username => (await page.request.post(base + '/api/register', {
@@ -137,6 +138,21 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         assert.equal(await page.locator('#my-reviews-list').isVisible(), false);
         await page.locator('#my-following-list button').click();
         await profile.getByText('关注测试评价').waitFor();
+        await page.setViewportSize({width: 360, height: 520});
+        const profileBody = profile.locator('.profile-dialog-body');
+        const bounds = await profileBody.evaluate(body => {
+            const longReviewList = document.createElement('div');
+            longReviewList.style.height = '1500px';
+            body.append(longReviewList);
+            const close = body.parentElement.querySelector('.modal-close');
+            const before = close.getBoundingClientRect().top;
+            body.scrollTop = body.scrollHeight;
+            const after = close.getBoundingClientRect();
+            return {before, top: after.top, bottom: after.bottom, scroll: body.scrollTop};
+        });
+        assert.ok(bounds.scroll > 0 && bounds.top >= 0 && bounds.bottom <= 520, JSON.stringify(bounds));
+        assert.ok(Math.abs(bounds.before - bounds.top) < 1, JSON.stringify(bounds));
+        await profileBody.evaluate(body => { body.scrollTop = 0; });
         await profile.getByRole('button', {name: '取消关注'}).click();
         await profile.getByRole('button', {name: '关注', exact: true}).waitFor();
         await profile.getByRole('button', {name: '关注', exact: true}).click();
