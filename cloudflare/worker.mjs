@@ -75,8 +75,12 @@ async function route(request, env) {
     const all = async (sql, ...args) => (await q(sql, ...args).all()).results;
     const batch = statements => env.DB.batch(statements);
     const token = /^Bearer ([a-f0-9]{32})$/.exec(request.headers.get('Authorization') || '')?.[1];
-    const viewer = token ? await first('SELECT id,username,nickname,taste,birthplace,is_admin FROM users WHERE token=?', token) : null;
+    const viewer = token ? await first('SELECT id,username,nickname,taste,birthplace,is_admin,is_muted FROM users WHERE token=? AND is_banned=0', token) : null;
     const auth = () => { if (!viewer) fail(401, '请先登录'); return viewer; };
+    if (viewer?.is_muted && (
+        (method === 'POST' && (path === '/api/ratings' || path === '/api/feedback' || path.startsWith('/api/forum/'))) ||
+        (method === 'PATCH' && /^\/api\/ratings\/\d+$/.test(path))
+    )) fail(403, '账号已被禁言，暂时无法发布内容');
 
     if (method === 'GET' && path === '/api/food-types') {
         const [types, overrides] = await batch([
@@ -102,7 +106,7 @@ async function route(request, env) {
         const username = getText(data.username, 50, '账号');
         const password = getText(data.password, 100, '密码');
         if (!username || !password) fail(400, '账号和密码不能为空');
-        let user = await first('SELECT id,password,token,nickname,is_admin FROM users WHERE username=?', username);
+        let user = await first('SELECT id,password,token,nickname,is_admin,is_banned FROM users WHERE username=?', username);
         if (path === '/api/register') {
             if (typeof data.confirm_password !== 'string' || data.confirm_password.trim() !== password) fail(400, '两次输入的密码不一致');
             if (user || username.toLowerCase() === 'admin' || username.toLowerCase().startsWith('__guest_')) fail(409, '该账号不可注册');
@@ -118,10 +122,9 @@ async function route(request, env) {
             const computed = Buffer.from(await passwordHash(password, salt));
             const stored = Buffer.from(user.password);
             if (computed.length !== stored.length || !timingSafeEqual(computed, stored)) fail(401, '账号不存在或密码错误');
-            if (!user.token) {
-                user = await first('UPDATE users SET token=COALESCE(token,?) WHERE id=? RETURNING *',
-                    randomBytes(16).toString('hex'), user.id);
-            }
+            user = await first('UPDATE users SET token=COALESCE(token,?) WHERE id=? AND is_banned=0 RETURNING token,nickname,is_admin',
+                randomBytes(16).toString('hex'), user.id);
+            if (!user) fail(403, '账号已被封禁');
         }
         return json({ token: user.token, nickname: user.nickname, is_admin: Boolean(user.is_admin) });
     }

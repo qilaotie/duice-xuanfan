@@ -102,6 +102,8 @@ class User(db.Model):
     has_avatar = column_property(avatar.expression.is_not(None))
     password = db.Column(db.String(200), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)  # 是否管理员
+    is_banned = db.Column(db.Boolean, nullable=False, default=False)
+    is_muted = db.Column(db.Boolean, nullable=False, default=False)
     token = db.Column(db.String(64), unique=True, nullable=True)
 
 
@@ -325,7 +327,19 @@ def get_current_user():
     token = auth.replace("Bearer ", "", 1).strip()
     if not token:
         return None
-    return User.query.filter_by(token=token).first()
+    return User.query.filter_by(token=token, is_banned=False).first()
+
+
+@app.before_request
+def check_content_mute():
+    publishing = (
+        request.method == "POST" and request.endpoint in {"create_rating", "forum_posts", "submit_feedback"}
+        or request.method == "PATCH" and request.endpoint == "create_rating"
+    )
+    if publishing:
+        user = get_current_user()
+        if user and user.is_muted:
+            return jsonify({"msg": "账号已被禁言，暂时无法发布内容"}), 403
 
 
 def require_admin():
@@ -373,7 +387,16 @@ def login():
     elif not user or not check_password_hash(user.password, password):
         return jsonify({"msg": "账号不存在或密码错误"}), 401
 
-    user.token = user.token or uuid.uuid4().hex
+    if request.path == "/api/login":
+        result = db.session.execute(text("""UPDATE users SET token=COALESCE(token,:token)
+            WHERE id=:id AND is_banned=0 RETURNING token,is_admin,nickname"""),
+            {"token": uuid.uuid4().hex, "id": user.id}).mappings().first()
+        if result is None:
+            db.session.rollback()
+            return jsonify({"msg": "账号已被封禁"}), 403
+        db.session.commit()
+        return jsonify(dict(result) | {"is_admin": bool(result["is_admin"])})
+    user.token = uuid.uuid4().hex
     try:
         db.session.commit()
     except IntegrityError:
@@ -1175,6 +1198,46 @@ def set_stall_food_types(canteen_id):
     return jsonify({"msg": "操作成功"})
 
 
+@app.get("/api/admin/users")
+@app.patch("/api/admin/users/<int:user_id>")
+def manage_users(user_id=None):
+    viewer, resp, code = require_admin()
+    if resp:
+        return resp, code
+    primary = viewer.username == "admin"
+    if user_id is None:
+        search = request.args.get("q", "").strip().lower()[:100]
+        users = User.query.filter(func.substr(User.username, 1, 8) != "__guest_")
+        if not primary:
+            users = users.filter(func.coalesce(User.is_admin, False).is_(False), User.username != "admin")
+        if search:
+            users = users.filter((func.instr(func.lower(User.username), search) > 0) |
+                                 (func.instr(func.lower(User.nickname), search) > 0))
+        return jsonify([{key: getattr(user, key) for key in
+                         ("id", "username", "nickname", "is_admin", "is_banned", "is_muted")}
+                        for user in users.order_by(User.id.desc()).limit(50)])
+    data = request.get_json(silent=True) or {}
+    field = data.get("field") if isinstance(data, dict) else None
+    enabled = data.get("enabled") if isinstance(data, dict) else None
+    if field not in ("is_admin", "is_banned", "is_muted") or type(enabled) is not bool:
+        return jsonify({"msg": "权限设置无效"}), 400
+    if not primary and field == "is_admin":
+        return jsonify({"msg": "仅主管理员可以调整管理员权限"}), 403
+    revoke = (field == "is_banned" and enabled) or (field == "is_admin" and not enabled)
+    invalidate = ",token=NULL" if revoke else ""
+    result = db.session.execute(text(f"""UPDATE users SET {field}=:enabled{invalidate}
+        WHERE id=:id AND username<>'admin' AND substr(username,1,8)<>'__guest_'
+        AND (:primary=1 OR COALESCE(is_admin,0)=0)
+        AND (is_banned=0 OR :promote=0) RETURNING id"""),
+        {"enabled": enabled, "id": user_id, "primary": primary, "promote": field == "is_admin" and enabled}).first()
+    if not result:
+        db.session.rollback()
+        return jsonify({"msg": "账号不存在、受保护或处于封禁状态"}), 409
+    log_admin_action(viewer, "moderate_user", "user", user_id, details=f"{field}={int(enabled)}")
+    db.session.commit()
+    return jsonify({"msg": "操作成功"})
+
+
 @app.get("/api/admin/administrators")
 @app.delete("/api/admin/administrators/<int:user_id>")
 def manage_administrators(user_id=None):
@@ -1681,6 +1744,9 @@ def ensure_db_schema():
         if not any(column[1] == "suggested_category_id" for column in feedback_columns):
             db.session.execute(text("ALTER TABLE feedback ADD COLUMN suggested_category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL"))
         user_columns = db.session.execute(text("PRAGMA table_info(users)")).fetchall()
+        for column in ("is_banned", "is_muted"):
+            if not any(item[1] == column for item in user_columns):
+                db.session.execute(text(f"ALTER TABLE users ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"))
         if not any(column[1] == "nickname" for column in user_columns):
             db.session.execute(text("ALTER TABLE users ADD COLUMN nickname VARCHAR(24)"))
         if not any(column[1] == "taste" for column in user_columns):

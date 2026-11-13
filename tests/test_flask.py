@@ -157,6 +157,24 @@ class ApiTests(unittest.TestCase):
         db.session.get(User, 2).is_admin = True
         db.session.commit()
         path = "/api/admin/administrators"
+        self.assertEqual(self.admin("GET", "users?q=MEMBER", 200)[0]["id"], 2)
+        self.api("PATCH", "/api/admin/users/2", 409, token="member-token",
+                 data={"field": "is_muted", "enabled": True})
+        self.assertEqual([user["id"] for user in self.api("GET", "/api/admin/users", 200, token="member-token")], [3])
+        for field, enabled, status in (("is_admin", True, 403), ("is_muted", True, 200),
+                                       ("is_muted", False, 200), ("is_banned", True, 200),
+                                       ("is_banned", False, 200)):
+            self.api("PATCH", "/api/admin/users/3", status, token="member-token",
+                     data={"field": field, "enabled": enabled})
+        self.admin("PATCH", "users/1", 409, data={"field": "is_banned", "enabled": True})
+        self.admin("PATCH", "users/2", 400, data={"field": "token", "enabled": True})
+        self.admin("PATCH", "users/2", 200, data={"field": "is_muted", "enabled": True})
+        self.api("POST", "/api/ratings", 403, token="member-token", data={"canteen_id": 1, "score": 4})
+        self.api("POST", "/api/forum/posts", 403, token="member-token", data={})
+        self.api("GET", "/api/profile", 200, token="member-token")
+        self.admin("PATCH", "users/3", 200, data={"field": "is_banned", "enabled": True})
+        self.api("GET", "/api/profile", 401, token="other-token")
+        self.admin("PATCH", "users/3", 200, data={"field": "is_banned", "enabled": False})
         self.api("GET", path, 403, token="member-token")
         self.api("DELETE", path + "/2", 403, token="member-token")
         self.admin("DELETE", "administrators/1", 404)

@@ -44,6 +44,7 @@
 
     const ACTION_LABELS = {
         revoke_admin: '撤销管理员权限',
+        moderate_user: '调整用户权限',
         add_category: '新增食堂',
         delete_category: '删除食堂',
         add_canteen: '新增档口',
@@ -523,9 +524,8 @@
     }
 
     function updateAuthUI() {
-        const canManageAdmins = state.isAdmin && state.username === 'admin';
-        $('[data-admin-tab="administrators"]').hidden = !canManageAdmins;
-        if (!canManageAdmins && state.adminTab === 'administrators') switchAdminTab('categories');
+        $('[data-admin-tab="administrators"]').hidden = !state.isAdmin;
+        if (!state.isAdmin && state.adminTab === 'administrators') switchAdminTab('categories');
         const loggedIn = Boolean(state.token);
         $('#my-reviews-btn').hidden = !loggedIn && !localStorage.getItem('guestToken');
 
@@ -2657,7 +2657,7 @@
     }
 
     function switchAdminTab(tab) {
-        if (tab === 'administrators' && !(state.isAdmin && state.username === 'admin')) return;
+        if (tab === 'administrators' && !state.isAdmin) return;
         state.adminTab = tab;
         $$('.admin-tab').forEach(button => button.classList.toggle('is-active', button.dataset.adminTab === tab));
         $$('.admin-section').forEach(section => section.classList.toggle('is-active', section.dataset.adminSection === tab));
@@ -2697,29 +2697,41 @@
 
     async function loadAdministratorAccounts() {
         const list = $('#admin-accounts-list');
+        const search = $('#admin-user-search').elements.q.value.trim();
         list.textContent = '正在加载…';
         try {
-            const accounts = await api('/api/admin/administrators');
+            const accounts = await api('/api/admin/users?q=' + encodeURIComponent(search));
             list.innerHTML = accounts.map(account => `
                 <div class="admin-row">
                     <div class="admin-row-main">
                         <strong>${escapeHtml(account.username)}</strong>
                         <p>${escapeHtml(account.nickname || '未设置昵称')}</p>
+                        <p>${account.is_admin ? '管理员' : '普通用户'} · ${account.is_banned ? '已封禁' : '可登录'} · ${account.is_muted ? '已禁言' : '可发言'}</p>
                     </div>
-                    <button type="button" class="btn btn-danger btn-sm" data-action="revoke-administrator"
-                        data-id="${Number(account.id)}" data-account="${escapeHtml(account.username)}">撤销管理权限</button>
-                </div>`).join('') || adminEmpty('暂无其他管理员账号。');
+                    ${account.username === 'admin' ? '<span class="muted">主管理员</span>' : `<div class="admin-row-actions">
+                        ${[
+                            ['is_admin', account.is_admin ? '撤销管理权限' : '设为管理员'],
+                            ['is_banned', account.is_banned ? '解除封禁' : '封禁'],
+                            ['is_muted', account.is_muted ? '解除禁言' : '禁言']
+                        ].filter(([field]) => field !== 'is_admin' || state.username === 'admin').map(([field, label]) => `<button type="button" class="btn btn-ghost btn-sm"
+                            data-action="moderate-user" data-id="${Number(account.id)}" data-field="${field}"
+                            data-enabled="${!account[field]}" data-account="${escapeHtml(account.username)}"
+                            ${field === 'is_admin' && account.is_banned && !account.is_admin ? 'disabled' : ''}>${label}</button>`).join('')}
+                    </div>`}
+                </div>`).join('') || adminEmpty('没有找到匹配的用户。');
         } catch (error) {
             list.textContent = error.message;
         }
     }
 
-    async function revokeAdministrator(id, button) {
-        if (!window.confirm(`撤销「${button.dataset.account}」的管理员权限并让该账号退出登录？`)) return;
+    async function moderateUser(id, button) {
+        if (!window.confirm(`对「${button.dataset.account}」执行「${button.textContent.trim()}」？`)) return;
         setBusy(button, true);
         try {
-            await api(`/api/admin/administrators/${id}`, {method: 'DELETE'});
-            toast('已撤销管理员权限');
+            await api(`/api/admin/users/${id}`, {method: 'PATCH', body: {
+                field: button.dataset.field, enabled: button.dataset.enabled === 'true'
+            }});
+            toast('用户权限已更新');
             await loadAdministratorAccounts();
         } catch (error) {
             toast(error.message, 'error');
@@ -2789,7 +2801,7 @@
                 body.append('photo', await preparePhoto(form.elements.photo.files[0]));
                 if (location !== 'other') body.append('suggested_category_id', location);
             }
-            await api('/api/feedback', { method: 'POST', body, auth: false });
+            await api('/api/feedback', { method: 'POST', body });
             closeModal($('#feedback-modal'));
             toast('反馈已提交，感谢！');
         } catch (errorMessage) {
@@ -3539,6 +3551,10 @@
     /* ---------------- 事件 ---------------- */
 
     function bindEvents() {
+        $('#admin-user-search').addEventListener('submit', event => {
+            event.preventDefault();
+            loadAdministratorAccounts();
+        });
         $('#add-food-type').addEventListener('submit', event => {
             event.preventDefault();
             saveFoodTypeChange(event.submitter, '/api/admin/food-types', 'POST', {
@@ -3878,8 +3894,8 @@
             case 'feedback-issue':
                 openFeedback('issue');
                 break;
-            case 'revoke-administrator':
-                if (id && state.isAdmin && state.username === 'admin') revokeAdministrator(id, element);
+            case 'moderate-user':
+                if (id && state.isAdmin) moderateUser(id, element);
                 break;
             case 'feedback-stall-issue':
                 if (state.detailData) openFeedback('issue', state.detailData);

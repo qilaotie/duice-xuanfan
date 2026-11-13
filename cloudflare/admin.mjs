@@ -4,6 +4,36 @@ export async function admin(ctx) {
         (admin_user_id,action,target_type,target_id,details,created_at) VALUES (?,?,?,?,?,?)`,
         viewer.id, name, type, id, name + ' by ' + viewer.username, now());
     const success = () => json({ msg: '操作成功' });
+    const managedUser = /^\/api\/admin\/users(?:\/(\d+))?$/.exec(path);
+    if (managedUser) {
+        const primary = viewer.username === 'admin';
+        if (method === 'GET' && !managedUser[1]) {
+            const search = new URL(request.url).searchParams.get('q')?.trim().slice(0, 100) || '';
+            return json(await all(`SELECT id,username,nickname,is_admin,is_banned,is_muted FROM users
+                WHERE substr(username,1,8)<>'__guest_' AND
+                    (?=1 OR (COALESCE(is_admin,0)=0 AND username<>'admin')) AND
+                    (instr(lower(username),lower(?))>0 OR instr(lower(COALESCE(nickname,'')),lower(?))>0 OR ?='')
+                ORDER BY id DESC LIMIT 50`, Number(primary), search, search, search));
+        }
+        if (method === 'PATCH' && managedUser[1]) {
+            const id = Number(managedUser[1]);
+            const {field, enabled} = await body(request);
+            if (!['is_admin','is_banned','is_muted'].includes(field) || typeof enabled !== 'boolean') fail(400, '权限设置无效');
+            if (!primary && field === 'is_admin') fail(403, '仅主管理员可以调整管理员权限');
+            const revoke = field === 'is_banned' && enabled || field === 'is_admin' && !enabled;
+            const [result] = await batch([
+                q(`UPDATE users SET ${field}=?${revoke ? ',token=NULL' : ''}
+                    WHERE id=? AND username<>'admin' AND substr(username,1,8)<>'__guest_'
+                    AND (?=1 OR COALESCE(is_admin,0)=0)
+                    AND (is_banned=0 OR ?=0) RETURNING id`, Number(enabled), id, Number(primary), Number(field === 'is_admin' && enabled)),
+                q(`INSERT INTO admin_actions (admin_user_id,action,target_type,target_id,details,created_at)
+                    SELECT ?, 'moderate_user', 'user', id, ?, ? FROM users WHERE id=? AND changes()=1`,
+                    viewer.id, field + '=' + Number(enabled), now(), id)
+            ]);
+            if (!result.results.length) fail(409, '账号不存在、受保护或处于封禁状态');
+            return success();
+        }
+    }
     if (path === '/api/admin/administrators' || path.startsWith('/api/admin/administrators/')) {
         if (viewer.username !== 'admin') fail(403, '仅主管理员可以管理管理员账号');
         if (method === 'GET' && path === '/api/admin/administrators') {

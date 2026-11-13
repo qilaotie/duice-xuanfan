@@ -289,7 +289,13 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await page.locator('#auth-submit').click();
         await page.locator('[data-nav="admin"]').click();
         await page.locator('[data-admin-tab="administrators"]').click();
-        await page.getByText('暂无其他管理员账号。', {exact: true}).waitFor();
+        await page.getByLabel('搜索用户').fill('social-viewer');
+        await page.locator('#admin-user-search button').click();
+        const managed = page.locator('#admin-accounts-list .admin-row').filter({hasText: 'social-viewer'});
+        await managed.getByText('普通用户 · 可登录 · 可发言').waitFor();
+        page.once('dialog', dialog => dialog.accept());
+        await managed.getByRole('button', {name: '禁言', exact: true}).click();
+        await managed.getByRole('button', {name: '解除禁言'}).waitFor();
         await page.locator('[data-admin-tab="categories"]').click();
         const row = page.locator('#admin-category-list .admin-row').filter({ hasText: '测试食堂' });
         await row.locator('[data-action="edit-category"]').click();

@@ -256,7 +256,7 @@
                 <button type="button" class="admin-tab" data-admin-tab="feedback" role="tab">用户反馈</button>
                 <button type="button" class="admin-tab" data-admin-tab="actions" role="tab">操作日志</button>
                 <button type="button" class="admin-tab" data-admin-tab="maintenance" role="tab">数据维护</button>
-                <button type="button" class="admin-tab" data-admin-tab="administrators" role="tab" hidden>管理员账号</button>
+                <button type="button" class="admin-tab" data-admin-tab="administrators" role="tab" hidden>用户管理</button>
             </div>
 
             <div class="admin-body">
@@ -359,8 +359,13 @@
                 </section>
 
                 <section class="admin-section" data-admin-section="administrators">
-                    <h2>管理员账号</h2>
-                    <p class="muted">撤销权限会让该账号当前的登录失效，重新登录后只能使用普通用户功能。</p>
+                    <h2>用户管理</h2>
+                    <p class="muted">封禁会使当前登录失效。禁言后，账号仍可登录和浏览。</p>
+                    <form class="inline-form" id="admin-user-search">
+                        <input name="q" aria-label="搜索用户" placeholder="输入账号或昵称" maxlength="100">
+                        <button type="submit" class="btn btn-primary">搜索</button>
+                    </form>
+                    <p class="muted">最多显示 50 条，可用完整账号缩小范围。</p>
                     <div class="admin-list" id="admin-accounts-list" aria-live="polite"></div>
                 </section>
                 <section class="admin-section" data-admin-section="maintenance">
@@ -680,6 +685,6 @@
         </div>
     </div>
 </div>
-<script src="app.js?v=social-profile" defer></script>
+<script src="app.js?v=user-management" defer></script>
 </body>
 </html>

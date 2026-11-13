@@ -232,11 +232,33 @@ test('ADM-01 moderation, catalog management and reviewed suggestions', async t =
     assert.equal((await call('feedback?status=processed', 200)).length, 2);
 });
 
-test('Only the primary administrator can revoke a maintenance administrator', async t => {
+test('Only the primary administrator can moderate users', async t => {
     const { api, db } = fixture(t);
     db.exec('UPDATE users SET is_admin=1 WHERE id=2');
     const path = '/api/admin/administrators';
     await api(path, 403, {token: member});
+    const users = '/api/admin/users';
+    assert.equal((await api(users + '?q=STUDENT', 200, {token: admin}))[0].id, 2);
+    const set = (id, field, enabled, status = 200, token = admin) =>
+        api(users + '/' + id, status, {method: 'PATCH', token, data: {field, enabled}});
+    assert.deepEqual((await api(users, 200, {token: member})).map(user => user.id), [3]);
+    await set(3, 'is_admin', true, 403, member);
+    await set(1, 'is_banned', true, 409, member);
+    await set(2, 'is_muted', true, 409, member);
+    await set(3, 'is_muted', true, 200, member);
+    await api('/api/forum/posts', 403, {method: 'POST', token: other, data: {}});
+    await set(3, 'is_muted', false, 200, member);
+    await set(1, 'is_banned', true, 409);
+    await set(2, 'token', true, 400);
+    await set(2, 'is_muted', true);
+    await api('/api/ratings', 403, {method: 'POST', token: member, data: {canteen_id: 1, score: 4}});
+    await api('/api/forum/posts', 403, {method: 'POST', token: member, data: {}});
+    await api('/api/profile', 200, {token: member});
+    await set(2, 'is_muted', false);
+    await set(3, 'is_banned', true, 200, member);
+    await api('/api/profile', 401, {token: other});
+    await set(3, 'is_admin', true, 409);
+    await set(3, 'is_banned', false, 200, member);
     await api(path + '/1', 404, {method: 'DELETE', token: admin});
     assert.equal((await api(path, 200, {token: admin}))[0].id, 2);
     await api(path + '/2', 403, {method: 'DELETE', token: member});
