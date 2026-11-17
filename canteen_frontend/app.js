@@ -1254,6 +1254,7 @@
         location.textContent = [stall.category_name || '位置待补充',
             stall.score == null ? '暂无评分' : '评分 ' + formatScore(stall.score)].join(' · ');
         copy.replaceChildren(name, location);
+        $('#random-food-photo').innerHTML = photoImage(stall.photo_url, '', 'stall-thumbnail');
         detail.dataset.id = String(stall.id);
         panel.hidden = false;
         $('#random-food-button').textContent = '换一个';
@@ -1461,6 +1462,7 @@
 
         return `<button type="button" class="stall-row" data-action="open-detail" data-id="${canteen.id}" title="${escapeHtml(canteen.name)}">
             <span class="slot-badge${parts.slot ? '' : ' is-empty'}">${escapeHtml(parts.slot || '·')}</span>
+            ${canteen.photo_url ? photoImage(canteen.photo_url, '', 'stall-thumbnail') : '<span class="stall-thumbnail" aria-hidden="true"></span>'}
             <span class="stall-row-main">
                 <span class="stall-row-name">${escapeHtml(parts.name)}</span>
             </span>
@@ -2346,6 +2348,10 @@
         try {
             if (photo) body.append('photo', await preparePhoto(photo));
             await api(`/api/admin/photos/${photoKind}/${id}`, { method: photo ? 'PUT' : 'DELETE', body });
+            if (photoKind === 'canteens') {
+                clearRandomFoodResult();
+                await loadCanteens();
+            }
             if (state.detailId === detailId) await openDetail(detailId);
             toast(photo ? '照片已保存' : '照片已移除');
         } catch (error) {

@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=rating-scroll">
+    <link rel="stylesheet" href="styles.css?v=stall-thumbnails">
 </head>
 <body>
 <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -80,7 +80,10 @@
                     <button type="button" class="btn btn-ghost-light btn-sm food-picker-clear">清空选择</button>
                 </details>
                 <div class="random-food-result" id="random-food-result" hidden>
-                    <div id="random-food-copy" aria-live="polite"></div>
+                    <div class="random-food-preview">
+                        <div id="random-food-photo" aria-hidden="true"></div>
+                        <div id="random-food-copy" aria-live="polite"></div>
+                    </div>
                     <button type="button" class="btn btn-light btn-sm" data-action="open-detail">查看档口</button>
                 </div>
             </div>
@@ -712,6 +715,6 @@
         <div class="profile-dialog-body"><div id="recommendation-content" class="stack" aria-live="polite"></div></div>
     </div>
 </div>
-<script src="app.js?v=admin-author-review-history" defer></script>
+<script src="app.js?v=stall-thumbnails" defer></script>
 </body>
 </html>

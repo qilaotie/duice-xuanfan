@@ -63,7 +63,8 @@ function decodeScores(value) {
     return JSON.parse(value || 'null') || [];
 }
 
-const stallsSql = `SELECT c.id,c.name,c.category_id,g.name category_name,COALESCE(g.kind,'canteen') category_kind,c.is_active,
+
+const stallsSql = (columns = '') => `SELECT c.id,c.name,c.category_id,g.name category_name,COALESCE(g.kind,'canteen') category_kind,c.is_active,${columns}
     ROUND(AVG(r.score),2) score, COUNT(r.id) rating_count
     FROM canteens c LEFT JOIN categories g ON g.id=c.category_id
     LEFT JOIN ratings r ON r.canteen_id=c.id AND r.is_deleted=0`;
@@ -210,10 +211,12 @@ async function route(request, env) {
 
     if (method === 'GET' && path === '/api/categories') return json(await all('SELECT * FROM categories ORDER BY id'));
     if (method === 'GET' && path === '/api/canteens') {
-        return json(await all(stallsSql + ' WHERE c.is_active=1 GROUP BY c.id ORDER BY c.category_id,c.name'));
+        const rows = await all(stallsSql('c.photo IS NOT NULL has_photo,') +
+            ' WHERE c.is_active=1 GROUP BY c.id ORDER BY c.category_id,c.name');
+        return json(rows.map(({has_photo, ...row}) => ({...row, photo_url: has_photo ? `/api/photos/canteens/${row.id}` : null})));
     }
     if (method === 'GET' && path === '/api/stalls/ranking') {
-        const rows = await all(stallsSql + " WHERE c.is_active=1 AND COALESCE(g.kind,'canteen')='canteen' GROUP BY c.id HAVING COUNT(r.id)>0 ORDER BY score DESC,c.id");
+        const rows = await all(stallsSql() + " WHERE c.is_active=1 AND COALESCE(g.kind,'canteen')='canteen' GROUP BY c.id HAVING COUNT(r.id)>0 ORDER BY score DESC,c.id");
         return json(rows.map(row => ({ ...row, avg_score: row.score })));
     }
 

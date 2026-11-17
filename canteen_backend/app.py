@@ -614,7 +614,8 @@ def get_canteens():
             "category_id": c.category_id,
             "category_name": cat.name if cat else None,
             "category_kind": cat.kind if cat else "canteen",
-            "score": round(avg, 2) if avg is not None else None  # ✅ 前端就用 score
+            "score": round(avg, 2) if avg is not None else None,
+            "photo_url": photo_url("canteens", c),
         })
     return jsonify(result)
 

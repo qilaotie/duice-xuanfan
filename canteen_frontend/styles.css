@@ -444,6 +444,32 @@ a {
 .random-food-result strong, .random-food-result span { display: block; }
 .random-food-result span { margin-top: 3px; font-size: 12px; }
 
+.random-food-preview {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+#random-food-photo { flex: none; }
+#random-food-photo:empty { display: none; }
+
+.stall-thumbnail {
+    display: block;
+    flex: none;
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+    object-fit: cover;
+}
+
+#random-food-photo .stall-thumbnail { width: 60px; height: 60px; }
+
+@media (max-width: 600px) {
+    .stall-thumbnail { width: 48px; height: 48px; }
+}
+
 .hero-actions {
     display: flex;
     flex-wrap: wrap;
