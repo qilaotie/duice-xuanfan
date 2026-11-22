@@ -358,3 +358,14 @@ test('maps remain private until enabled and only admins can save layouts',async 
  await api('/api/maps/status',200,{method:'PUT',token:admin,data:{enabled:false}});
  await api('/api/maps/1',403);
 });
+
+test('stall number and name can be edited independently',async t=>{
+ const {api}=fixture(t);
+ await api('/api/admin/canteens/1',200,{method:'PATCH',token:admin,data:{slot_number:'01-02',name:'Noodle house'}});
+ let row=await api('/api/canteens/1',200);
+ assert.equal(row.slot_number,'01-02');assert.equal(row.display_name,'Noodle house');
+ assert.equal((await api('/api/canteens',200)).find(x=>x.id===1).slot_number,'01-02');
+ await api('/api/admin/canteens/1',200,{method:'PATCH',token:admin,data:{slot_number:'',name:'123 Food'}});
+ row=await api('/api/canteens/1',200);assert.equal(row.slot_number,'');assert.equal(row.display_name,'123 Food');
+ await api('/api/admin/canteens/1',400,{method:'PATCH',token:admin,data:{slot_number:'invalid',name:'Food'}});
+});

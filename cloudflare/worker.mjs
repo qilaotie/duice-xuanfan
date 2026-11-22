@@ -1,6 +1,7 @@
 import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { admin } from './admin.mjs';
+import { stallFields } from './stall-fields.mjs';
 import { maps } from './maps.mjs';
 import { forum } from './forum.mjs';
 import { recommendations } from './recommendations.mjs';
@@ -65,7 +66,7 @@ function decodeScores(value) {
 }
 
 
-const stallsSql = (columns = '') => `SELECT c.id,c.name,c.category_id,g.name category_name,COALESCE(g.kind,'canteen') category_kind,c.is_active,${columns}
+const stallsSql = (columns = '') => `SELECT c.id,c.name,c.slot_number,c.display_name,c.category_id,g.name category_name,COALESCE(g.kind,'canteen') category_kind,c.is_active,${columns}
     ROUND(AVG(r.score),2) score, COUNT(r.id) rating_count
     FROM canteens c LEFT JOIN categories g ON g.id=c.category_id
     LEFT JOIN ratings r ON r.canteen_id=c.id AND r.is_deleted=0`;
@@ -215,7 +216,7 @@ async function route(request, env) {
     if (method === 'GET' && path === '/api/canteens') {
         const rows = await all(stallsSql('c.photo IS NOT NULL has_photo,') +
             ' WHERE c.is_active=1 GROUP BY c.id ORDER BY c.category_id,c.name');
-        return json(rows.map(({has_photo, ...row}) => ({...row, photo_url: has_photo ? `/api/photos/canteens/${row.id}` : null})));
+        return json(rows.map(({has_photo, ...row}) => ({...stallFields(row), photo_url: has_photo ? `/api/photos/canteens/${row.id}` : null})));
     }
     if (method === 'GET' && path === '/api/stalls/ranking') {
         const rows = await all(stallsSql() + " WHERE c.is_active=1 AND COALESCE(g.kind,'canteen')='canteen' GROUP BY c.id HAVING COUNT(r.id)>0 ORDER BY score DESC,c.id");
@@ -226,7 +227,7 @@ async function route(request, env) {
     if (method === 'GET' && match) {
         const id = Number(match[1]);
         const [stallResult, dishResult, ratingResult, historyResult] = await batch([
-            q(`SELECT c.id,c.name,c.category_id,g.name category_name,c.photo IS NOT NULL has_photo
+            q(`SELECT c.id,c.name,c.slot_number,c.display_name,c.category_id,g.name category_name,c.photo IS NOT NULL has_photo
                 FROM canteens c LEFT JOIN categories g ON g.id=c.category_id WHERE c.id=?`, id),
             q('SELECT id,name,photo IS NOT NULL has_photo FROM dishes WHERE canteen_id=? ORDER BY name', id),
             q(`SELECT r.id,r.user_id,u.nickname,u.username GLOB '__guest_*' is_guest,
@@ -267,7 +268,7 @@ async function route(request, env) {
             dish.score = mean(values);
             dish.rating_count = values.length;
         }
-        return json({ ...stall, score: mean(comments.map(row => row.score)), comments, dishes,
+        return json({ ...stallFields(stall), score: mean(comments.map(row => row.score)), comments, dishes,
             photo_url: photoUrl('canteens', stall),
             history: historyResult.results.map(row => ({ ...row, date: minute(row.created_at) })) });
     }

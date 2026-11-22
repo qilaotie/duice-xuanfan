@@ -199,7 +199,15 @@ export async function admin(ctx) {
         const [, table, raw, addDish] = match;
         const id = Number(raw);
         const dish = addDish || table === 'dishes';
-        const name = getText((await body(request)).name, dish ? 80 : 100, '名称').replace(/\s+/gu, ' ');
+        const data = await body(request);
+        let name = getText(data.name, dish ? 80 : 100, '名称').replace(/\s+/gu, ' ');
+        const separate = table === 'canteens' && !addDish && Object.hasOwn(data,'slot_number');
+        let slot = null;
+        if (separate) {
+            slot = getText(data.slot_number,20,'楼层内编号').trim();
+            if(slot && !/^\d+(?:[-–—一]\d+)?#?$/.test(slot)) fail(400,'编号格式无效');
+            if(!name) fail(400,'名称不能为空');
+        }
         if (!name) fail(400, '名称不能为空');
         const category = table === 'categories';
         if (!await first(`SELECT id FROM ${table} WHERE id=?`, id)) fail(404, '记录不存在');
@@ -210,7 +218,11 @@ export async function admin(ctx) {
             await action('add_dish', 'dish', row.id).run();
         } else {
             try {
-                await batch([q(`UPDATE ${table} SET name=? WHERE id=?`, name, id),
+                await batch([separate
+                    ? q('UPDATE canteens SET name=?,display_name=?,slot_number=? WHERE id=?',slot + name,name,slot,id)
+                    : table === 'canteens'
+                        ? q('UPDATE canteens SET name=?,display_name=NULL,slot_number=NULL WHERE id=?',name,id)
+                        : q(`UPDATE ${table} SET name=? WHERE id=?`, name, id),
                     action(category ? 'rename_category' : dish ? 'rename_dish' : 'rename_canteen',
                         category ? 'category' : dish ? 'dish' : 'canteen', id)]);
             } catch (error) {
@@ -268,11 +280,14 @@ export async function admin(ctx) {
         const name = getText(data.name, 100, '名称');
         if (!name) fail(400, '请输入名称');
         const category = path.endsWith('/categories');
+        const slot = !category && Object.hasOwn(data,'slot_number') ? getText(data.slot_number,20,'楼层内编号') : null;
+        if(slot && !/^\d+(?:[-–—一]\d+)?#?$/.test(slot)) fail(400,'编号格式无效');
         const categoryId = Number(data.category_id);
         if (!category && !await first('SELECT id FROM categories WHERE id=?', categoryId)) fail(400, '食堂不存在');
         const row = category
             ? await first('INSERT INTO categories (name) VALUES (?) RETURNING id', name)
-            : await first('INSERT INTO canteens (name,category_id,is_active) VALUES (?,?,1) RETURNING id', name, categoryId);
+            : await first('INSERT INTO canteens (name,category_id,is_active,slot_number,display_name) VALUES (?,?,1,?,?) RETURNING id',
+                slot===null?name:slot+name, categoryId, slot, slot===null?null:name);
         await action(category ? 'add_category' : 'add_canteen', category ? 'category' : 'canteen', row.id).run();
         return json({ msg: '新增成功', id: row.id });
     }

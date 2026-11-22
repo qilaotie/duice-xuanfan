@@ -289,7 +289,8 @@
                         </div>
                     </div>
                     <form class="inline-form" id="add-canteen-form">
-                        <input type="text" id="new-canteen-name" placeholder="输入档口名称，例如：03 炸鸡汉堡" maxlength="100" required>
+                        <input type="text" id="new-canteen-slot" aria-label="新档口楼层内编号" placeholder="楼层内编号（选填）" maxlength="20">
+                        <input type="text" id="new-canteen-name" placeholder="档口名称，例如：炸鸡汉堡" maxlength="100" required>
                         <select id="new-canteen-category" required aria-label="所属食堂">
                             <option value="">选择所属食堂</option>
                         </select>
@@ -719,6 +720,6 @@
         <div class="profile-dialog-body"><div id="recommendation-content" class="stack" aria-live="polite"></div></div>
     </div>
 </div>
-<script src="app.js?v=private-floor-maps" defer></script>
+<script src="app.js?v=separate-stall-number" defer></script>
 </body>
 </html>

@@ -1473,7 +1473,10 @@
     }
 
     function stallRowHtml(canteen, rankingById) {
-        const parts = splitStallName(canteen.name);
+        const parts = {
+            slot: canteen.slot_number ?? splitStallName(canteen.name).slot,
+            name: canteen.display_name ?? splitStallName(canteen.name).name
+        };
         const ranking = rankingById.get(canteen.id);
         const hasScore = canteen.score !== null && canteen.score !== undefined;
         const reviews = ranking ? Number(ranking.rating_count) || 0 : 0;
@@ -2220,8 +2223,10 @@
         return `<section class="detail-panel stack">
             <div class="panel-head"><h3>档口管理</h3></div>
             <form class="inline-form" data-menu-action="rename-canteen" data-id="${id}">
-                <input name="name" aria-label="档口名称" value="${escapeHtml(stall.name)}" maxlength="100" required>
-                <button type="submit" class="btn btn-primary btn-sm">保存档口名称</button>
+                <label>楼层内编号<input name="slot_number" aria-label="楼层内编号" placeholder="如 03、01-02，可留空"
+                    value="${escapeHtml(stall.slot_number ?? splitStallName(stall.name).slot)}" maxlength="20"></label>
+                <label>档口名称<input name="name" aria-label="档口名称" value="${escapeHtml(stall.display_name ?? splitStallName(stall.name).name)}" maxlength="100" required></label>
+                <button type="submit" class="btn btn-primary btn-sm">保存档口信息</button>
             </form>
             ${foodCatalog ? `<form class="stack" data-stall-food-types="${id}">
                 <fieldset>
@@ -2268,7 +2273,9 @@
         const button = form.querySelector('button[type="submit"]');
         setBusy(button, true);
         try {
-            await api(path, { method: add ? 'POST' : 'PATCH', body: { name: form.elements.namedItem('name').value.trim() } });
+            const fields = {name: form.elements.namedItem('name').value.trim()};
+            if (menuAction === 'rename-canteen') fields.slot_number = form.elements.namedItem('slot_number').value.trim();
+            await api(path, { method: add ? 'POST' : 'PATCH', body: fields });
             toast(add ? '菜品已添加' : '名称已保存');
             if (detailId && state.detailId === detailId) await openDetail(detailId);
             if (group === 'categories') {
@@ -3557,9 +3564,10 @@
         try {
             await api('/api/admin/canteens', {
                 method: 'POST',
-                body: { name, category_id: Number(categoryId) }
+                body: { name, category_id: Number(categoryId), slot_number: $('#new-canteen-slot').value.trim() }
             });
             nameInput.value = '';
+            $('#new-canteen-slot').value = '';
             toast('档口已添加');
             await refreshAll();
             switchAdminTab('canteens');

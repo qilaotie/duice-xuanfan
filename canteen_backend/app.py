@@ -120,6 +120,8 @@ class Canteen(db.Model):
     has_photo = column_property(photo.expression.is_not(None))
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
+    slot_number = db.Column(db.String(20))
+    display_name = db.Column(db.String(100))
     category_id = db.Column(db.Integer, db.ForeignKey("categories.id"), nullable=True)
     is_active = db.Column(db.Boolean, default=True, nullable=False)  # 下架的旧档口仍保留历史评分
 
@@ -611,6 +613,8 @@ def get_canteens():
         result.append({
             "id": c.id,
             "name": c.name,
+            "slot_number": c.slot_number,
+            "display_name": c.display_name,
             "category_id": c.category_id,
             "category_name": cat.name if cat else None,
             "category_kind": cat.kind if cat else "canteen",
@@ -686,6 +690,8 @@ def get_canteen_detail(canteen_id):
     return jsonify({
         "id": c.id,
         "name": c.name,
+            "slot_number": c.slot_number,
+            "display_name": c.display_name,
         "category_id": c.category_id,
         "category_name": cat.name if cat else None,
         "score": round(avg, 2) if avg is not None else None,
@@ -1574,6 +1580,8 @@ def admin_canteen_list():
         result.append({
             "id": c.id,
             "name": c.name,
+            "slot_number": c.slot_number,
+            "display_name": c.display_name,
             "category_id": c.category_id,
             "category_name": cat.name if cat else None,
             "is_active": bool(c.is_active)
@@ -1600,7 +1608,11 @@ def admin_add_canteen():
     if not cat:
         return jsonify({"msg": "食堂不存在"}), 400
 
-    c = Canteen(name=name, category_id=category_id, is_active=True)
+    slot = data.get("slot_number")
+    if slot is not None and (not isinstance(slot,str) or len(slot)>20 or (slot and not re.fullmatch(r"\d+(?:[-–—一]\d+)?#?",slot))):
+        return jsonify(msg="编号格式无效"),400
+    c = Canteen(name=name if slot is None else slot+name, category_id=category_id, is_active=True,
+                slot_number=slot, display_name=name if slot is not None else None)
     db.session.add(c)
     db.session.flush()
     log_admin_action(user, 'add_canteen', 'canteen', c.id,
@@ -1622,7 +1634,8 @@ def admin_update_menu(item_id):
     edit_category = request.path.startswith("/api/admin/categories/")
     model = Category if edit_category else Dish if edit_dish else Canteen
     item = model.query.get_or_404(item_id)
-    value = (request.get_json() or {}).get("name")
+    data = request.get_json() or {}
+    value = data.get("name")
     name = " ".join(value.split()) if isinstance(value, str) else ""
     if not name or len(name) > (80 if add_dish or edit_dish else 100):
         return jsonify({"msg": "名称无效"}), 400
@@ -1631,6 +1644,14 @@ def admin_update_menu(item_id):
         db.session.add(item)
     else:
         item.name = name
+        if model is Canteen:
+            if "slot_number" in data:
+                slot = data["slot_number"]
+                if not isinstance(slot,str) or len(slot)>20 or (slot and not re.fullmatch(r"\d+(?:[-–—一]\d+)?#?",slot)):
+                    return jsonify(msg="编号格式无效"),400
+                item.slot_number, item.display_name, item.name = slot, name, slot + name
+            else:
+                item.slot_number = item.display_name = None
     try:
         db.session.flush()
         target = "category" if edit_category else "dish" if add_dish or edit_dish else "canteen"
@@ -1742,6 +1763,10 @@ def ensure_db_schema():
     try:
         # 使用 session.execute 兼容 SQLAlchemy 1.4+ 的执行方式
         category_columns = db.session.execute(text("PRAGMA table_info(categories)")).fetchall()
+        stall_columns = db.session.execute(text("PRAGMA table_info(canteens)")).fetchall()
+        for column in ("slot_number", "display_name"):
+            if not any(item[1] == column for item in stall_columns):
+                db.session.execute(text(f"ALTER TABLE canteens ADD COLUMN {column} TEXT"))
         if not any(column[1] == "kind" for column in category_columns):
             db.session.execute(text("ALTER TABLE categories ADD COLUMN kind TEXT NOT NULL DEFAULT 'canteen'"))
         feedback_columns = db.session.execute(text("PRAGMA table_info(feedback)")).fetchall()
