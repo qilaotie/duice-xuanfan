@@ -1,6 +1,22 @@
 (() => {
     'use strict';
 
+    let mapAccess = false;
+    let mapAccessRequest = 0;
+    async function loadMapAccess() {
+        const version = ++mapAccessRequest;
+        try {
+            const result = await api('/api/maps/status');
+            if (version !== mapAccessRequest) return;
+            mapAccess = result.enabled || result.can_edit;
+        } catch { if (version === mapAccessRequest) mapAccess = false; }
+        if (version !== mapAccessRequest) return;
+        $$('.nav-link[data-nav="map"]').forEach(button => button.hidden = !mapAccess);
+        if (!mapAccess) {
+            $('#food-map-frame').removeAttribute('src');
+            if (state.view === 'map') showView('stalls');
+        }
+    }
     const state = {
         token: null,
         isAdmin: false,
@@ -164,7 +180,7 @@
         bindEvents();
         setInitialLoading();
         if (await useBackupIfNeeded()) return;
-        await Promise.allSettled([loadCategories(), loadCanteens(), loadRanking(), loadFoodTypes()]);
+        await Promise.allSettled([loadCategories(), loadCanteens(), loadRanking(), loadFoodTypes(), loadMapAccess()]);
         window.addEventListener('popstate', applyRoute);
         window.addEventListener('hashchange', () => {
             if (window.location.hash !== activeRouteHash) applyRoute();
@@ -188,7 +204,7 @@
     let routeVersion = 0;
     let scrollFrame = 0;
 
-    const viewPaths = { stalls: '/canteens', campus: '/campus', forum: '/forum', ranking: '/ranking', admin: '/admin' };
+    const viewPaths = { stalls: '/canteens', campus: '/campus', map: '/map', forum: '/forum', ranking: '/ranking', admin: '/admin' };
 
     function listHash() {
         const query = new URLSearchParams();
@@ -278,6 +294,7 @@
         if (thread) view = 'forum';
         if (detail && !parent) view = state.canteens.find(stall => stall.id === Number(detail[1]))?.category_kind === 'campus' ? 'campus' : 'stalls';
         if (view === 'admin' && !state.isAdmin) view = 'stalls';
+        if (view === 'map' && !mapAccess) view = 'stalls';
         const snapshot = parent?.ui || history.state?.ui;
         $$('.modal.is-open').forEach(closeModal);
         const location = Number(listUrl.searchParams.get('location'));
@@ -529,6 +546,7 @@
     }
 
     function updateAuthUI() {
+        loadMapAccess();
         $('[data-admin-tab="administrators"]').hidden = !state.isAdmin;
         if (!state.isAdmin && state.adminTab === 'administrators') switchAdminTab('categories');
         const loggedIn = Boolean(state.token);
@@ -1795,6 +1813,7 @@
     /* ---------------- 视图切换 ---------------- */
 
     function showView(name) {
+        if (name === 'map' && !mapAccess) return;
         if (name === 'admin' && !state.isAdmin) {
             toast('请先用管理员账号登录', 'error');
             return;
@@ -1818,6 +1837,10 @@
         if (!applyingRoute) window.scrollTo({ top: 0, behavior: 'instant' });
 
         if (name === 'ranking') renderRanking();
+        if (name === 'map') {
+            const frame = $('#food-map-frame');
+            if (!frame.getAttribute('src')) frame.src = frame.dataset.src;
+        }
         if (name === 'campus') renderCampusFood();
         if (name === 'forum' && !applyingRoute) loadForum();
         if (name === 'admin') loadAdminAll();
@@ -3836,6 +3859,10 @@
     /* ---------------- 事件 ---------------- */
 
     function bindEvents() {
+        window.addEventListener('message', event => {
+            if (event.origin === window.location.origin && event.source === $('#food-map-frame').contentWindow &&
+                event.data?.action === 'map-open-stall' && Number.isSafeInteger(event.data.id)) openDetail(event.data.id);
+        });
         $('#admin-user-search').addEventListener('submit', event => {
             event.preventDefault();
             loadAdministratorAccounts();

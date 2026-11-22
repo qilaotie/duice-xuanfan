@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS map_settings (
+    id INTEGER PRIMARY KEY CHECK(id=1),
+    enabled INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO map_settings(id,enabled) VALUES(1,0);
+CREATE TABLE IF NOT EXISTS floor_maps (
+    category_id INTEGER PRIMARY KEY REFERENCES categories(id) ON DELETE CASCADE,
+    shapes TEXT NOT NULL DEFAULT '[]'
+);

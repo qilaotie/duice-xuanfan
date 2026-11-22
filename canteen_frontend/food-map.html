@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>对策选饭 · 地图预览</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f8f7;color:#193b38;font:15px system-ui,sans-serif}button,input,select{font:inherit}button{cursor:pointer;border:1px solid #d5e4e0;border-radius:12px;padding:10px 14px;background:white;color:inherit}button[aria-pressed=true]{background:#287e76;color:white;border-color:#287e76}.shell{height:100dvh;display:flex;flex-direction:column;gap:12px;padding:16px}.bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.choices{display:flex;gap:8px;overflow:auto;flex-shrink:0;padding-bottom:4px}.choices button{white-space:nowrap}p{margin:0;color:#607a75;font-size:13px}.canvas{flex:1;min-height:180px;background:#fff;border:1px solid #dce7e3;border-radius:18px;overflow:hidden;position:relative}svg{width:100%;height:100%;touch-action:none;user-select:none}.tools{margin-left:auto;display:flex;gap:6px}.selection{background:white;padding:12px;border-radius:14px;display:flex;align-items:center;gap:12px}.selection strong{flex:1}input,select{padding:8px;border:1px solid #d5e4e0;border-radius:8px;max-width:100%}.editor{display:flex;gap:8px;flex-wrap:wrap}.editor label{display:flex;gap:4px;align-items:center}.editor input{width:76px}#search{width:190px}.muted{fill:#718781}[hidden]{display:none!important}@media(max-width:500px){.shell{padding:8px}.bar{gap:6px}button{padding:9px 12px}.tools{margin-left:0}.selection{flex-wrap:wrap}#search{width:150px}}
+
+.shell { position:relative; gap:0; padding:0; background:#f4f8f7; }
+.choices { position:relative; z-index:2; padding:10px 12px 6px; gap:10px; background:rgba(244,248,247,.95); }
+.choices button { border-radius:999px; box-shadow:0 2px 3px #193b3819; padding:10px 18px; }
+#floors { padding-top:4px; padding-bottom:12px; }
+.bar { order:3; position:absolute; bottom:16px; right:16px; z-index:3; background:#ffffffee; padding:8px; border-radius:16px; box-shadow:0 4px 20px #193b3814; max-width:calc(100% - 32px); }
+.canvas { border:0; border-radius:0; min-height:260px; background:transparent; }
+#notice { position:absolute; left:14px; bottom:76px; z-index:2; max-width:calc(100% - 28px); font-size:12px; pointer-events:none; }
+.selection { position:absolute; left:16px; bottom:130px; right:16px; z-index:4; box-shadow:0 6px 25px #193b3820; border:1px solid #d8e5df; }
+.editor { position:absolute; z-index:5; left:12px; right:12px; bottom:125px; padding:14px; border-radius:16px; background:white; box-shadow:0 6px 25px #193b3820; }
+.shell:has(#editor:not([hidden])) .selection { bottom:280px; }
+#search { width:170px; background:#f7faf8; }
+.tools { margin:0; }
+@media(max-width:500px) {
+ .shell { padding:0; }
+ .choices { padding-left:10px; padding-right:10px; }
+ .choices button { padding:10px 17px; }
+ .bar { bottom:12px; right:10px; left:10px; max-width:none; gap:5px; justify-content:space-between; }
+ #search { width:125px; min-width:0; flex:1; }
+ .tools { gap:4px; }
+ .tools button { padding:8px 10px; }
+ #notice { bottom:74px; }
+ .selection { left:10px; right:10px; bottom:120px; }
+}
+</style>
+</head><body>
+<div class="shell">
+<div class="bar"><input id="search" type="search" placeholder="搜索当前楼层档口" aria-label="搜索当前楼层档口"><div class="tools"><button id="out" aria-label="缩小">−</button><button id="fit">适应</button><button id="in" aria-label="放大">＋</button><button id="edit" aria-pressed="false">编辑布局</button></div></div>
+<div id="buildings" class="choices" aria-label="建筑"></div>
+<div id="floors" class="choices" aria-label="楼层"></div>
+<p id="notice">预览示意布局 · 位置尚未核实。拖动查看，双指或滚轮缩放，点档口查看详情。</p>
+<div class="canvas"><svg id="map" role="img" aria-label="楼层位置示意图"></svg></div>
+<div id="selection" class="selection" hidden><strong id="selected-name"></strong><button id="detail">查看档口</button><button id="clear">取消选择</button></div>
+<div id="editor" class="editor" hidden>
+<button id="entrance">添加入口</button><button id="stairs">添加楼梯</button>
+<label>宽<input id="width" type="number" min="40" max="400" value="150"></label>
+<label>高<input id="height" type="number" min="40" max="300" value="80"></label>
+<button id="save">保存到云端</button><button id="reset">重置此层</button><button id="export">导出布局</button>
+<button id="visibility">向普通用户开放地图</button>
+<p>调整后点击保存到云端，其他管理员可继续维护。确认各层位置后再开放地图。</p>
+</div>
+</div>
+<script src="food-map.js"></script>
+</body></html>

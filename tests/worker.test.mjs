@@ -342,3 +342,19 @@ test('recommendation lists enforce visibility and support publishing, items and 
     await call(list, 200, 'DELETE', member);
     await call(list, 404, 'GET', member);
 });
+
+test('maps remain private until enabled and only admins can save layouts',async t=>{
+ const {api}=fixture(t);
+ assert.deepEqual(await api('/api/maps/status',200),{enabled:false,can_edit:false});
+ await api('/api/maps/1',403);
+ await api('/api/maps/status',403,{method:'PUT',token:member,data:{enabled:true}});
+ const shapes=[{id:'one',kind:'shop',stallId:1,x:20,y:30,width:150,height:80}];
+ await api('/api/maps/1',200,{method:'PUT',token:admin,data:{shapes}});
+ assert.deepEqual((await api('/api/maps/1',200,{token:admin})).shapes,shapes);
+ await api('/api/maps/1',400,{method:'PUT',token:admin,data:{shapes:[{...shapes[0],stallId:99}]}});
+ await api('/api/maps/status',200,{method:'PUT',token:admin,data:{enabled:true}});
+ await api('/api/maps/1',200);
+ await api('/api/maps/1',403,{method:'PUT',token:member,data:{shapes:[]}});
+ await api('/api/maps/status',200,{method:'PUT',token:admin,data:{enabled:false}});
+ await api('/api/maps/1',403);
+});

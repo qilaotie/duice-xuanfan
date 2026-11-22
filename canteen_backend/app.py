@@ -1858,11 +1858,14 @@ def ensure_db_schema():
 
 
 if __package__:
+    from .maps import init_maps, register_maps
     from .recommendations import init_recommendations, register_recommendations
 else:
+    from maps import init_maps, register_maps
     from recommendations import init_recommendations, register_recommendations
 
 register_recommendations(app, db, get_current_user)
+register_maps(app, db, get_current_user)
 
 
 def init_database():
@@ -1872,9 +1875,10 @@ def init_database():
         db.create_all()
         ensure_db_schema()
         init_recommendations(db)
+        init_maps(db)
         follows = Path(BASE_DIR).parent / "cloudflare" / "migrations" / "0011_user_follows.sql"
         db.session.execute(text(follows.read_text(encoding="utf-8")))
-        if not inspect(db.engine).has_table("food_types"):
+        if not inspect(db.session.connection()).has_table("food_types"):
             migration = Path(BASE_DIR).parent / "cloudflare" / "migrations" / "0010_food_types.sql"
             for statement in migration.read_text(encoding="utf-8").split(";"):
                 if statement.strip():

@@ -36,6 +36,7 @@
         <nav class="main-nav" aria-label="主导航">
             <button type="button" class="nav-link is-active" data-nav="stalls">食堂</button>
             <button type="button" class="nav-link" data-nav="campus">校内美食</button>
+            <button type="button" class="nav-link" data-nav="map" hidden>地图</button>
             <button type="button" class="nav-link" data-nav="forum">校外论坛</button>
             <button type="button" class="nav-link" data-nav="ranking">排行榜</button>
             <button type="button" class="nav-link" data-nav="admin" hidden>管理后台</button>
@@ -151,6 +152,9 @@
     </section>
 
     <!-- ======== 排行榜视图 ======== -->
+    <section class="view" id="view-map" hidden>
+        <iframe id="food-map-frame" title="食堂与综合楼位置示意图" style="width:100%;height:calc(100dvh - 190px);min-height:480px;border:0;border-radius:20px" data-src="food-map.html"></iframe>
+    </section>
     <section class="view" id="view-campus" hidden>
         <div class="hero-copy section-hero">
             <span class="eyebrow">CAMPUS FOOD</span>
@@ -715,6 +719,6 @@
         <div class="profile-dialog-body"><div id="recommendation-content" class="stack" aria-live="polite"></div></div>
     </div>
 </div>
-<script src="app.js?v=stall-thumbnails" defer></script>
+<script src="app.js?v=private-floor-maps" defer></script>
 </body>
 </html>
