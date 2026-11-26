@@ -47,6 +47,28 @@ class ApiTests(unittest.TestCase):
     def admin(self, method, path, status, **kwargs):
         return self.api(method, "/api/admin/" + path, status, token="admin-token", **kwargs)
 
+    def test_floor_map_visibility_and_layout(self):
+        settings = "/api/maps/status"
+        floor = "/api/maps/1"
+        admin = "admin-token"
+        self.assertEqual(self.api("GET", settings, 200), {"enabled": False, "can_edit": False})
+        self.api("GET", floor, 403)
+        self.api("PUT", settings, 403, token="member-token", data={"enabled": True})
+        self.api("PUT", settings, 400, token=admin, data={"enabled": "true"})
+        self.assertIsNone(self.api("GET", floor, 200, token=admin)["shapes"])
+
+        shop = {"id": "stall-1", "kind": "shop", "stallId": 1, "x": 10, "y": 20, "width": 80, "height": 60}
+        self.api("PUT", floor, 400, token=admin, data={"shapes": [shop, shop]})
+        self.api("PUT", floor, 400, token=admin, data={"shapes": [{**shop, "stallId": 999}]})
+        self.api("PUT", "/api/maps/999", 404, token=admin, data={"shapes": []})
+        self.api("PUT", floor, 200, token=admin, data={"shapes": [shop]})
+        self.api("GET", floor, 403)
+        self.api("PUT", settings, 200, token=admin, data={"enabled": True})
+        self.assertEqual(self.api("GET", floor, 200), {"shapes": [shop], "can_edit": False})
+        self.api("PUT", floor, 403, token="member-token", data={"shapes": []})
+        self.api("PUT", settings, 200, token=admin, data={"enabled": False})
+        self.api("GET", floor, 403)
+
     @staticmethod
     def photo():
         stream = io.BytesIO()
@@ -246,9 +268,11 @@ class ApiTests(unittest.TestCase):
         self.admin("DELETE", f"categories/{category}", 400)
         self.admin("PATCH", f"categories/{category}", 200, data={"name": "Renamed"})
         self.admin("PATCH", f"canteens/{stall}", 200, data={"name": "Renamed Stall"})
-        self.admin("POST", f"canteens/{stall}/dishes", 200, data={"name": "A"})
+        created = self.admin("POST", f"canteens/{stall}/dishes", 200, data={"name": "A"})
+        self.assertEqual(created["name"], "A")
         self.admin("POST", f"canteens/{stall}/dishes", 409, data={"name": "A"})
         dish = self.api("GET", f"/api/canteens/{stall}/dishes", 200)[0]["id"]
+        self.assertEqual(created["id"], dish)
         self.admin("PATCH", f"dishes/{dish}", 200, data={"name": "B"})
         url = self.admin("PUT", f"photos/dishes/{dish}", 200, files={"photo": self.photo()})["photo_url"]
         self.api("GET", url, 200)
