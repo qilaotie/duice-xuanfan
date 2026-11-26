@@ -2009,14 +2009,27 @@ textarea {
 .photo-controls {
     display: flex;
     flex-wrap: wrap;
-    align-items: end;
+    align-items: center;
     gap: 8px;
     margin-top: 6px;
 }
 
-.photo-controls input {
-    max-width: 220px;
+.photo-picker {
+    position: relative;
+    display: inline-flex;
 }
+
+.photo-picker input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.photo-picker:focus-within { outline: 2px solid currentColor; border-radius: 8px; }
+.photo-filename { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+[data-managed-photo]:empty { display: none; }
 
 .detail-hero {
     position: relative;

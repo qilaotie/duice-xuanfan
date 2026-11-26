@@ -2084,7 +2084,7 @@
             <div class="detail-hero">
                 <span class="tag tag-light">${escapeHtml(data.category_name || '未分类')}</span>
                 <div class="detail-photo-row">
-                    ${photoImage(data.photo_url, data.name)}
+                    <span data-managed-photo>${photoImage(data.photo_url, data.name)}</span>
                     <div>
                         <h2 id="detail-title">${escapeHtml(data.name)}</h2>
                     </div>
@@ -2231,7 +2231,7 @@
             ${foodCatalog ? `<form class="stack" data-stall-food-types="${id}">
                 <fieldset>
                     <legend>餐饮分类（可多选）</legend>
-                    <p class="muted">${Object.hasOwn(foodCatalog.overrides, id) ? '当前使用手动分类' : '当前根据档口名自动分类'}</p>
+                    <p class="muted" data-food-type-mode>${Object.hasOwn(foodCatalog.overrides, id) ? '当前使用手动分类' : '当前根据档口名自动分类'}</p>
                     <div class="review-filters">
                         ${foodTypes().map(type => `<label><input type="checkbox" name="food-type" value="${escapeHtml(type.id)}"${stallFoodTypes(stall).some(item => item.id === type.id) ? ' checked' : ''}> ${escapeHtml(type.name)}</label>`).join('') || '<p class="muted">请先在后台新增餐饮分类。</p>'}
                     </div>
@@ -2248,7 +2248,7 @@
                 <button type="submit" class="btn btn-primary btn-sm">添加菜品</button>
             </form>
             ${(stall.dishes || []).map(dish => `<div class="detail-photo-row dish-photo-row">
-                ${photoImage(dish.photo_url, dish.name)}
+                <span data-managed-photo>${photoImage(dish.photo_url, dish.name)}</span>
                 <div>
                     <form class="inline-form" data-menu-action="rename-dish" data-id="${Number(dish.id)}">
                         <input name="name" aria-label="菜品名称" value="${escapeHtml(dish.name)}" maxlength="80" required>
@@ -2362,33 +2362,54 @@
     function photoControls(kind, item) {
         if (!state.isAdmin) return '';
         return `<div class="photo-controls">
-            <label class="field">
-                <span>${item.photo_url ? '更换照片' : '添加照片'}</span>
-                <input type="file" accept="image/jpeg,image/png,image/webp" data-photo-kind="${kind}" data-id="${Number(item.id)}">
+            <label class="photo-picker">
+                <span class="btn btn-ghost btn-sm" data-photo-label>${item.photo_url ? '更换照片' : '添加照片'}</span>
+                <input type="file" aria-label="选择照片" accept="image/jpeg,image/png,image/webp" data-photo-kind="${kind}" data-id="${Number(item.id)}">
             </label>
-            ${item.photo_url ? `<button type="button" class="btn btn-soft btn-sm" data-action="remove-photo" data-photo-kind="${kind}" data-id="${Number(item.id)}">移除照片</button>` : ''}
+            <span class="photo-filename muted" aria-live="polite">${item.photo_url ? '已有照片' : '未选择文件'}</span>
+            <button type="button" class="btn btn-soft btn-sm" data-action="remove-photo" data-photo-kind="${kind}" data-id="${Number(item.id)}"${item.photo_url ? '' : ' hidden'}>移除照片</button>
         </div>`;
     }
 
     async function updateDisplayPhoto(control, photo = null) {
-        const detailId = state.detailId;
         const { photoKind, id } = control.dataset;
+        const controls = control.closest('.photo-controls');
+        const picker = $('input', controls);
+        const remove = $('[data-action="remove-photo"]', controls);
+        const filename = $('.photo-filename', controls);
+        const previousName = filename.textContent;
+        const isStall = photoKind === 'canteens';
+        const item = isStall ? state.detailData : state.detailData?.dishes.find(dish => String(dish.id) === id);
+        const preview = isStall ? $('#detail-content .detail-hero [data-managed-photo]') :
+            $('[data-managed-photo]', controls.closest('.dish-photo-row'));
         const body = photo ? new FormData() : undefined;
-        control.disabled = true;
+        picker.disabled = remove.disabled = true;
+        if (photo) filename.textContent = photo.name;
         try {
             if (photo) body.append('photo', await preparePhoto(photo));
-            await api(`/api/admin/photos/${photoKind}/${id}`, { method: photo ? 'PUT' : 'DELETE', body });
-            if (photoKind === 'canteens') {
-                clearRandomFoodResult();
-                await loadCanteens();
+            const result = await api(`/api/admin/photos/${photoKind}/${id}`, { method: photo ? 'PUT' : 'DELETE', body });
+            const url = result.photo_url ? result.photo_url + '?v=' + Date.now() : null;
+            if (item) item.photo_url = url;
+            if (controls.isConnected) {
+                preview.innerHTML = photoImage(url, item?.name || '照片');
+                remove.hidden = !url;
+                $('[data-photo-label]', controls).textContent = url ? '更换照片' : '添加照片';
+                if (!url) filename.textContent = '未选择文件';
             }
-            if (state.detailId === detailId) await openDetail(detailId);
+            if (isStall) {
+                const stall = state.canteens.find(row => String(row.id) === id);
+                if (stall) stall.photo_url = url;
+                clearRandomFoodResult();
+                renderCanteenGrid();
+                renderCampusFood();
+            }
             toast(photo ? '照片已保存' : '照片已移除');
         } catch (error) {
+            filename.textContent = previousName;
             toast(error.message, 'error');
         } finally {
-            control.disabled = false;
-            if (photo) control.value = '';
+            picker.disabled = remove.disabled = false;
+            picker.value = '';
         }
     }
 
@@ -3251,18 +3272,25 @@
     }
 
     async function saveFoodTypeChange(button, path, method, body, detailId = null) {
+        const form = detailId ? button.form : null;
+        const fields = form ? [...form.querySelectorAll('input, button')] : [];
+        fields.forEach(field => field.disabled = true);
         setBusy(button, true);
         try {
             await api(path, {method, body});
             if (method === 'POST') button.form.reset();
             await loadFoodTypes();
-            if (detailId && state.detailId === detailId && $('#detail-modal').classList.contains('is-open')) {
-                await openDetail(detailId);
+            if (form?.isConnected && state.detailId === detailId && foodCatalog) {
+                const selected = new Set(stallFoodTypes(state.detailData).map(type => type.id));
+                form.querySelectorAll('input[name="food-type"]').forEach(input => input.checked = selected.has(input.value));
+                $('[data-food-type-mode]', form).textContent = Object.hasOwn(foodCatalog.overrides, detailId)
+                    ? '当前使用手动分类' : '当前根据档口名自动分类';
             }
             toast('餐饮分类已更新');
         } catch (error) {
             toast(error.message, 'error');
         } finally {
+            fields.forEach(field => field.disabled = false);
             setBusy(button, false);
         }
     }

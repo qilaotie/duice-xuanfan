@@ -473,6 +473,24 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await form.getByRole('checkbox', {name: '烧烤'}).check();
         await form.getByRole('button', {name: '保存分类', exact: true}).click();
         await form.getByText('当前使用手动分类').waitFor();
+        const nameInput = page.locator('[data-menu-action="rename-canteen"] input[name="name"]');
+        const savedName = await nameInput.inputValue();
+        await nameInput.fill('尚未保存的档口名称');
+        const photoControls = page.locator('#detail-content .photo-controls').first();
+        await photoControls.locator('input').setInputFiles({
+            name: '新档口照片.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(photo, 'base64')
+        });
+        await photoControls.getByRole('button', {name: '移除照片'}).waitFor();
+        assert.equal(await photoControls.locator('.photo-filename').textContent(), '新档口照片.jpg');
+        assert.equal(await nameInput.inputValue(), '尚未保存的档口名称');
+        await form.getByRole('button', {name: '恢复自动分类'}).click();
+        await form.getByText('当前根据档口名自动分类').waitFor();
+        assert.equal(await nameInput.inputValue(), '尚未保存的档口名称');
+        assert.equal(await photoControls.locator('.photo-filename').textContent(), '新档口照片.jpg');
+        await nameInput.fill(savedName);
+        await form.getByRole('checkbox', {name: '烧烤'}).check();
+        await form.getByRole('button', {name: '保存分类', exact: true}).click();
+        await form.getByText('当前使用手动分类').waitFor();
         await page.locator('#detail-modal .detail-close').click();
         await type.locator('summary').first().click();
         await type.locator('[data-action="open-detail"][data-id="1"]').waitFor();
