@@ -1,11 +1,43 @@
 'use strict';
+const {h, render: patch, Fragment} = Vue;
+
+Vue.createApp({
+    render() {
+        const button = (id, label, attrs = {}) => h('button', {id, type: 'button', ...attrs}, label);
+        return h('div', {class: 'shell'}, [
+            h('div', {class: 'bar'}, [
+                h('input', {id: 'search', type: 'search', placeholder: '搜索当前楼层档口', 'aria-label': '搜索当前楼层档口'}),
+                h('div', {class: 'tools'}, [
+                    button('out', '−', {'aria-label': '缩小'}),
+                    button('fit', '适应'),
+                    button('in', '＋', {'aria-label': '放大'}),
+                    button('edit', '编辑布局', {'aria-pressed': 'false', hidden: true})
+                ])
+            ]),
+            h('div', {id: 'buildings', class: 'choices', 'aria-label': '建筑'}),
+            h('div', {id: 'floors', class: 'choices', 'aria-label': '楼层'}),
+            h('p', {id: 'notice'}, '预览示意布局 · 位置尚未核实。拖动查看，双指或滚轮缩放，点档口查看详情。'),
+            h('div', {class: 'canvas'}, [h('svg', {id: 'map', role: 'img', 'aria-label': '楼层位置示意图'})]),
+            h('div', {id: 'selection', class: 'selection', hidden: true}, [
+                h('strong', {id: 'selected-name'}), button('detail', '查看档口'), button('clear', '取消选择')
+            ]),
+            h('div', {id: 'editor', class: 'editor', hidden: true}, [
+                button('entrance', '添加入口'), button('stairs', '添加楼梯'),
+                h('label', ['宽', h('input', {id: 'width', type: 'number', min: 40, max: 400, value: 150})]),
+                h('label', ['高', h('input', {id: 'height', type: 'number', min: 40, max: 300, value: 80})]),
+                button('save', '保存到云端'), button('reset', '重置此层'), button('export', '导出布局'),
+                button('visibility', '向普通用户开放地图'),
+                h('p', '调整后点击保存到云端，其他管理员可继续维护。确认各层位置后再开放地图。')
+            ])
+        ]);
+    }
+}).mount('#food-map-app');
+
 const el = id => document.getElementById(id);
 const svg = el('map');
-const ns = 'http://www.w3.org/2000/svg';
 let categories = [], stalls = [], groups = [], building = '', floor = null;
 let shapes = [], selected = null, editing = false;
 let canEdit=false, mapEnabled=false, floorRequest=0;
-el('edit').hidden=true;
 async function api(path,options={}) {
     const response=await fetch(path,{...options,headers:{Authorization:localStorage.getItem('token')||'',
         'Content-Type':'application/json'}});
@@ -23,20 +55,10 @@ const groupName = name => {
     const match = name.match(/^(.*?)(?:[一二三四五六七八九十d]+[层楼])/);
     return match ? match[1] : name;
 };
-function node(tag, attrs, text) {
-    const element = document.createElementNS(ns, tag);
-    Object.entries(attrs).forEach(([key,value]) => element.setAttribute(key,value));
-    if (text !== undefined) element.textContent = text;
-    return element;
-}
 function tabs(container, items, current, click) {
-    container.replaceChildren(...items.map(item => {
-        const button = document.createElement('button');
-        button.textContent = item.name;
-        button.setAttribute('aria-pressed', String(item.id === current));
-        button.onclick = () => click(item.id);
-        return button;
-    }));
+    patch(h(Fragment, items.map(item => h('button', {
+        key: item.id, type: 'button', 'aria-pressed': String(item.id === current), onClick: () => click(item.id)
+    }, item.name))), container);
 }
 function selectBuilding(id) {
     building = id;
@@ -89,22 +111,37 @@ function fit() {
 }
 function updateView(){svg.setAttribute('viewBox', [view.x,view.y,view.w,view.h].join(' '));}
 function render() {
-    svg.replaceChildren();
     const query=el('search').value.trim().toLowerCase();
-    for(const shape of shapes) {
-        const stall=stalls.find(stall=>stall.id===shape.stallId);
-        const label=shape.kind==='shop' ? stall?.name || '档口' : shape.kind==='stairs' ? '楼梯' : '入口';
-        const active=selected===shape.id;
-        const group=node('g',{'data-shape':shape.id,tabindex:0,role:'button','aria-label':label,opacity:query&&!label.toLowerCase().includes(query)?0.22:1});
-    const fill=active?'#2a8077':shape.kind==='shop'?'#f4d3ad':shape.kind==='stairs'?'#bfccec':'#b7dfbd';
-        group.append(node('rect',{x:shape.x,y:shape.y,width:shape.width,height:shape.height,rx:12,fill,stroke:active?'#155c53':'#9dbdb3','stroke-width':active?3:1.5}));
-        const labelText=node('text',{x:shape.x+shape.width/2,y:shape.y+shape.height/2,'text-anchor':'middle',fill:active?'white':'#234d46','font-size':15,'pointer-events':'none'});
-        const lines=Array.from(label).reduce((all,char,index)=>{const line=Math.floor(index/Math.max(4,Math.floor(shape.width/16)));all[line]=(all[line]||'')+char;return all},[]);
-        lines.forEach((line,index)=>labelText.append(node('tspan',{x:shape.x+shape.width/2,dy:index?20:-(lines.length-1)*10},line)));
-        group.append(labelText);
-        group.onkeydown=event=>{if(['Enter',' '].includes(event.key)){event.preventDefault();selected=shape.id;render();}};
-        svg.append(group);
-    }
+    const stallsById = new Map(stalls.map(stall => [stall.id, stall]));
+    const shapeColors = {shop: '#f4d3ad', stairs: '#bfccec', entrance: '#b7dfbd'};
+    patch(h(Fragment, shapes.map(shape => {
+        const label = shape.kind === 'shop' ? stallsById.get(shape.stallId)?.name || '档口' : shape.kind === 'stairs' ? '楼梯' : '入口';
+        const active = selected === shape.id;
+        const x = shape.x + shape.width / 2;
+        const y = shape.y + shape.height / 2;
+        const lineLength = Math.max(4, Math.floor(shape.width / 16));
+        const lines = [];
+        for (const [index, char] of Array.from(label).entries()) {
+            const line = Math.floor(index / lineLength);
+            lines[line] = (lines[line] || '') + char;
+        }
+        return h('g', {
+            key: shape.id, 'data-shape': shape.id, tabindex: 0, role: 'button', 'aria-label': label,
+            opacity: query && !label.toLowerCase().includes(query) ? 0.22 : 1,
+            onKeydown(event) {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                selected = shape.id;
+                render();
+            }
+        }, [
+            h('rect', {x: shape.x, y: shape.y, width: shape.width, height: shape.height, rx: 12,
+                fill: active ? '#2a8077' : shapeColors[shape.kind] || shapeColors.entrance,
+                stroke: active ? '#155c53' : '#9dbdb3', 'stroke-width': active ? 3 : 1.5}),
+            h('text', {x, y, 'text-anchor': 'middle', fill: active ? 'white' : '#234d46', 'font-size': 15, 'pointer-events': 'none'},
+                lines.map((line, index) => h('tspan', {key: index, x, dy: index ? 20 : -(lines.length - 1) * 10}, line)))
+        ]);
+    })), svg, 'svg');
     const shape=shapes.find(s=>s.id===selected);
     const stall=stalls.find(stall=>stall.id===shape?.stallId);
     el('selection').hidden=!shape;

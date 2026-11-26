@@ -216,6 +216,7 @@ export async function admin(ctx) {
                 ON CONFLICT(canteen_id,name) DO NOTHING RETURNING id`, id, name);
             if (!row) fail(409, '该档口已有同名菜品');
             await action('add_dish', 'dish', row.id).run();
+            return json({msg: '操作成功', id: row.id, name});
         } else {
             try {
                 await batch([separate

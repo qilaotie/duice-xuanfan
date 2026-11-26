@@ -11,13 +11,13 @@
             mapAccess = result.enabled || result.can_edit;
         } catch { if (version === mapAccessRequest) mapAccess = false; }
         if (version !== mapAccessRequest) return;
-        $$('.nav-link[data-nav="map"]').forEach(button => button.hidden = !mapAccess);
+        renderNavigation();
         if (!mapAccess) {
             $('#food-map-frame').removeAttribute('src');
             if (state.view === 'map') showView('stalls');
         }
     }
-    const state = {
+    const state = Vue.shallowReactive({
         token: null,
         isAdmin: false,
         username: '',
@@ -43,7 +43,7 @@
         adminTab: 'categories',
         adminRatingFilter: 'all',
         adminRatingUserId: null
-    };
+    });
 
     const $ = (selector, root = document) => root.querySelector(selector);
     const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -126,26 +126,43 @@
     }
 
     function selectedFoodTypes(picker) {
-        return $$('.food-choice[aria-pressed="true"]', picker).map(button => button.value);
+        return picker.id === 'stall-food-type' ? state.foodType : foodPickerSelections.get(picker.id) || [];
     }
 
-    function updateFoodPickerSummary(picker) {
-        const count = selectedFoodTypes(picker).length;
+    const foodPickerSelections = new Map();
+
+    function renderFoodPicker(picker) {
+        const {h, render, Fragment} = Vue;
+        const selected = selectedFoodTypes(picker);
+        const count = selected.length;
         const label = picker.id === 'random-food-type' ? '推荐品类' : '餐饮分类';
-        $('summary', picker).textContent = count ? `${label}（已选 ${count} 项）` : `${label}（全部）`;
+        render(h(Fragment, [count ? `${label}（已选 ${count} 项）` : `${label}（全部）`]), $('summary', picker));
+        render(h(Fragment, foodTypes().map(({id, name}) => h('button', {
+            key: id, type: 'button', class: 'food-choice', value: id, 'aria-pressed': String(selected.includes(id)),
+            onClick: () => setFoodPickerSelection(picker, selected.includes(id)
+                ? selected.filter(value => value !== id) : [...selected, id])
+        }, name))), $('.food-picker-options', picker));
+    }
+
+    function setFoodPickerSelection(picker, selection) {
+        if (picker.id === 'stall-food-type') {
+            state.foodType = selection;
+            renderCanteenGrid();
+            return;
+        }
+        foodPickerSelections.set(picker.id, selection);
+        renderFoodPicker(picker);
+        if (picker.id === 'ranking-food-type') renderRanking();
+        else clearRandomFoodResult();
     }
 
     function updateFoodTypeOptions() {
-        const types = foodTypes();
-        state.foodType = state.foodType.filter(id => types.some(type => type.id === id));
-        for (const selector of ['#stall-food-type', '#ranking-food-type', '#random-food-type']) {
-            const picker = $(selector);
-            const previous = selector === '#stall-food-type' ? state.foodType : selectedFoodTypes(picker);
-            $('.food-picker-options', picker).innerHTML = types.map(({id, name}) =>
-                `<button type="button" class="food-choice" value="${escapeHtml(id)}" aria-pressed="${previous.includes(id)}">${escapeHtml(name)}</button>`
-            ).join('');
-            updateFoodPickerSummary(picker);
+        const valid = new Set(foodTypes().map(({id}) => id));
+        state.foodType = state.foodType.filter(id => valid.has(id));
+        for (const [id, selection] of foodPickerSelections) {
+            foodPickerSelections.set(id, selection.filter(value => valid.has(value)));
         }
+        for (const picker of $$('#stall-food-type, #ranking-food-type, #random-food-type')) renderFoodPicker(picker);
     }
     const beijingTimeFormat = new Intl.DateTimeFormat('zh-CN', {
         timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -167,10 +184,13 @@
         return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
     }
 
-    document.addEventListener('DOMContentLoaded', init);
+    let initialRouteReady = false;
 
     async function init() {
+        Vue.watch(() => state.view, renderActiveView, {immediate: true, flush: 'sync'});
+        Vue.watch(modalStack, renderModalLayers, {immediate: true, flush: 'sync'});
         restoreAuth();
+        setAuthMode(false);
 
         if (window.location.protocol === 'file:') {
             showFileTip();
@@ -186,6 +206,7 @@
             if (window.location.hash !== activeRouteHash) applyRoute();
         });
         history.scrollRestoration = 'manual';
+        initialRouteReady = true;
         await applyRoute();
         window.addEventListener('scroll', () => {
             if (scrollFrame) return;
@@ -271,11 +292,11 @@
     async function applyRoute() {
         if (activeRouteHash === window.location.hash) {
             const photoModal = $('#photo-viewer-modal');
-            if (photoModal.classList.contains('is-open') && !history.state?.photoViewer) {
+            if (isModalOpen(photoModal) && !history.state?.photoViewer) {
                 closeModal(photoModal);
                 return;
             }
-            if (history.state?.photoViewer && !photoModal.classList.contains('is-open')) {
+            if (history.state?.photoViewer && !isModalOpen(photoModal)) {
                 showPhotoViewer(history.state.photoViewer.photos, history.state.photoViewer.index, false);
                 return;
             }
@@ -296,7 +317,7 @@
         if (view === 'admin' && !state.isAdmin) view = 'stalls';
         if (view === 'map' && !mapAccess) view = 'stalls';
         const snapshot = parent?.ui || history.state?.ui;
-        $$('.modal.is-open').forEach(closeModal);
+        closeOpenModals();
         const location = Number(listUrl.searchParams.get('location'));
         state.categoryFilter = location > 0 && Number.isSafeInteger(location) ? location : null;
         state.diningGroupFilter = listUrl.searchParams.get('group') || '';
@@ -319,7 +340,7 @@
                 forumListRequest++;
                 forumCachedRows = snapshot.forumRows;
                 forumCursor = forumCachedRows.at(-1).id;
-                $('#forum-post-list').innerHTML = forumRowsHtml(forumCachedRows);
+                renderForumRows();
                 $('#forum-more').hidden = !snapshot.forumMore;
                 $('#forum-more').disabled = false;
             } else await loadForum();
@@ -380,16 +401,6 @@
 
     /* ---------------- 基础工具 ---------------- */
 
-    function escapeHtml(value) {
-        if (value === null || value === undefined) return '';
-        return String(value)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
     function formatNumber(value) {
         return numberFormat.format(Number(value) || 0);
     }
@@ -399,11 +410,9 @@
         return Number(value).toFixed(1);
     }
 
-    function starsHtml(score) {
+    function starNodes(score) {
         const rounded = Math.round(Number(score) || 0);
-        return [1, 2, 3, 4, 5]
-            .map(i => `<span${i > rounded ? ' class="is-empty"' : ''}>★</span>`)
-            .join('');
+        return [1, 2, 3, 4, 5].map(i => Vue.h('span', {key: i, class: {'is-empty': i > rounded}}, '★'));
     }
 
     function avatarGradient(id) {
@@ -441,40 +450,52 @@
         }
     }
 
-    function toast(message, type = 'success') {
+    const toastEntries = [];
+    let nextToastId = 0;
+
+    function renderToasts() {
         const stack = $('#toast-stack');
         if (!stack) return;
-        const element = document.createElement('div');
-        const icon = type === 'error' ? '!' : type === 'info' ? 'i' : '✓';
-        element.className = `toast toast-${type}`;
-        element.innerHTML = `<span class="toast-icon">${icon}</span><span>${escapeHtml(message)}</span>`;
-        stack.appendChild(element);
-        requestAnimationFrame(() => element.classList.add('is-visible'));
+        const {h, render, Fragment} = Vue;
+        render(h(Fragment, toastEntries.map(entry => h('div', {
+            key: entry.id, class: ['toast', 'toast-' + entry.type, {'is-visible': entry.visible}]
+        }, [
+            h('span', {class: 'toast-icon'}, entry.type === 'error' ? '!' : entry.type === 'info' ? 'i' : '✓'),
+            h('span', entry.message)
+        ]))), stack);
+    }
+
+    function toast(message, type = 'success') {
+        const entry = {id: ++nextToastId, message, type, visible: false};
+        toastEntries.push(entry);
+        renderToasts();
+        requestAnimationFrame(() => {
+            entry.visible = true;
+            renderToasts();
+        });
         window.setTimeout(() => {
-            element.classList.remove('is-visible');
-            window.setTimeout(() => element.remove(), 250);
+            entry.visible = false;
+            renderToasts();
+            window.setTimeout(() => {
+                toastEntries.splice(toastEntries.indexOf(entry), 1);
+                renderToasts();
+            }, 250);
         }, 3200);
     }
 
     function emptyState(title, text, icon = '🍽️') {
-        return `<div class="empty-state">
-            <div class="empty-icon">${icon}</div>
-            <h3>${escapeHtml(title)}</h3>
-            <p>${escapeHtml(text)}</p>
-        </div>`;
+        const {h} = Vue;
+        return h('div', {class: 'empty-state'}, [
+            h('div', {class: 'empty-icon'}, icon), h('h3', title), h('p', text)
+        ]);
     }
 
     function errorState(title, text) {
-        return `<div class="empty-state">
-            <div class="empty-icon">⚠️</div>
-            <h3>${escapeHtml(title)}</h3>
-            <p>${escapeHtml(text)}</p>
-            <button type="button" class="btn btn-soft btn-sm" style="margin-top:14px" data-action="retry">重新加载</button>
-        </div>`;
-    }
-
-    function adminEmpty(message) {
-        return `<div class="admin-empty">${escapeHtml(message)}</div>`;
+        const {h} = Vue;
+        return h('div', {class: 'empty-state'}, [
+            h('div', {class: 'empty-icon'}, '⚠️'), h('h3', title), h('p', text),
+            actionButton('重新加载', 'retry', 'btn btn-soft btn-sm', {style: {marginTop: '14px'}})
+        ]);
     }
 
     function getCategories() {
@@ -549,30 +570,41 @@
         loadMapAccess();
         $('[data-admin-tab="administrators"]').hidden = !state.isAdmin;
         if (!state.isAdmin && state.adminTab === 'administrators') switchAdminTab('categories');
-        const loggedIn = Boolean(state.token);
-        $('#my-reviews-btn').hidden = !loggedIn && !localStorage.getItem('guestToken');
-
-        const loginButton = $('#login-btn');
-        const userMenu = $('#user-menu');
-        if (loginButton) loginButton.hidden = loggedIn;
-        if (userMenu) userMenu.hidden = !loggedIn;
-
-        if (loggedIn) {
-            const name = state.nickname || state.username || '同学';
-            if ($('#user-name')) $('#user-name').textContent = name;
-            if ($('#user-avatar')) $('#user-avatar').textContent = name.slice(0, 1);
-            if ($('#admin-badge')) $('#admin-badge').hidden = !state.isAdmin;
-        } else if ($('#admin-badge')) {
-            $('#admin-badge').hidden = true;
-        }
-
-        $$('.nav-link[data-nav="admin"]').forEach(link => {
-            link.hidden = !state.isAdmin;
-        });
-
+        renderHeaderActions();
+        renderNavigation();
         if (!state.isAdmin && state.view === 'admin') {
             showView('stalls');
         }
+    }
+
+    function renderNavigation() {
+        const {h, render, Fragment} = Vue;
+        const items = [
+            ['stalls', '食堂'], ['campus', '校内美食'], ['map', '地图', !mapAccess],
+            ['forum', '校外论坛'], ['ranking', '排行榜'], ['admin', '管理后台', !state.isAdmin]
+        ];
+        render(h(Fragment, items.map(([id, label, hidden]) => h('button', {
+            key: id, type: 'button', hidden, class: ['nav-link', {'is-active': state.view === id}], 'data-nav': id
+        }, label))), $('.main-nav'));
+    }
+
+    function renderHeaderActions() {
+        const {h, render, Fragment} = Vue;
+        const loggedIn = Boolean(state.token);
+        const name = state.nickname || state.username || '同学';
+        render(h(Fragment, [
+            h('button', {id: 'login-btn', type: 'button', class: 'btn btn-primary btn-sm', hidden: loggedIn}, '登录 / 注册'),
+            h('div', {id: 'user-menu', class: 'user-menu', hidden: !loggedIn}, [
+                h('button', {id: 'nickname-btn', type: 'button', class: 'btn btn-ghost btn-sm', 'aria-label': '编辑个人资料'}, [
+                    h('span', {id: 'user-avatar', class: 'user-avatar'}, name.slice(0, 1)),
+                    h('span', {id: 'user-name', class: 'user-name'}, name)
+                ]),
+                h('span', {id: 'admin-badge', class: 'badge badge-amber', hidden: !loggedIn || !state.isAdmin}, '管理员'),
+                h('button', {id: 'logout-btn', type: 'button', class: 'btn btn-ghost btn-sm'}, '退出')
+            ]),
+            h('button', {id: 'my-reviews-btn', type: 'button', class: 'btn btn-ghost btn-sm',
+                hidden: !loggedIn && !localStorage.getItem('guestToken')}, '我的')
+        ]), $('.header-actions'));
     }
 
     function forceLogout() {
@@ -601,16 +633,27 @@
     }
 
     function setAuthMode(register) {
-        $('#auth-title').textContent = register ? '注册' : '登录';
-        $('#auth-submit').textContent = register ? '注册' : '登录';
-        $('#auth-toggle').textContent = register ? '已有账号？登录' : '没有账号？注册';
-        $('#auth-confirm-field').hidden = !register;
-        $('#auth-confirm').disabled = !register;
-        $('#auth-confirm').required = register;
+        const {h, render, Fragment} = Vue;
+        const mode = register ? '注册' : '登录';
+        const field = (label, input, hidden = false) => h('label', {class: 'field', hidden},
+            [h('span', label), h('input', input)]);
+        render(h(Fragment, [
+            h('button', {type: 'button', class: 'icon-btn modal-close', 'data-close-modal': '', 'aria-label': '关闭'}, '×'),
+            h('div', {class: 'modal-head'}, [h('span', {class: 'modal-icon'}, '食'), h('h2', {id: 'auth-title'}, mode)]),
+            h('form', {id: 'auth-form', class: 'stack', onSubmit: submitAuth}, [
+                field('账号', {type: 'text', id: 'auth-username', maxlength: 50, autocomplete: 'username', placeholder: '输入账号', required: true}),
+                field('密码', {type: 'password', id: 'auth-password', maxlength: 100, autocomplete: register ? 'new-password' : 'current-password',
+                    placeholder: '输入密码', required: true}),
+                field('确认密码', {type: 'password', id: 'auth-confirm', maxlength: 100, autocomplete: 'new-password',
+                    disabled: !register, required: register}, !register),
+                field('昵称（可选）', {type: 'text', id: 'auth-nickname', maxlength: 24, autocomplete: 'nickname', disabled: !register}, !register),
+                h('p', {class: 'form-error', id: 'auth-error', hidden: true}),
+                h('button', {type: 'submit', class: 'btn btn-primary btn-block', id: 'auth-submit'}, mode)
+            ]),
+            h('button', {type: 'button', class: 'btn btn-ghost btn-block', id: 'auth-toggle',
+                onClick: () => setAuthMode(!register)}, register ? '已有账号？登录' : '没有账号？注册')
+        ]), $('#auth-content'));
         $('#auth-confirm').value = '';
-        $('#auth-nickname-field').hidden = !register;
-        $('#auth-nickname').disabled = !register;
-        $('#auth-password').autocomplete = register ? 'new-password' : 'current-password';
         clearError($('#auth-error'));
     }
 
@@ -678,11 +721,11 @@
     }
 
     function avatarContent(url, name) {
-        return photoImage(url, '', 'avatar-image') || escapeHtml(initialOf(name));
+        return photoNode(url, '', 'avatar-image') || Vue.createTextVNode(initialOf(name));
     }
 
     function showProfileAvatar(url) {
-        $('#profile-avatar-preview').innerHTML = avatarContent(url, state.nickname || '同学');
+        Vue.render(avatarContent(url, state.nickname || '同学'), $('#profile-avatar-preview'));
         $('#profile-avatar-label').textContent = url ? '更换头像' : '选择头像';
         $('#profile-avatar-status').textContent = '';
         $('#profile-avatar-remove').hidden = !url;
@@ -748,146 +791,169 @@
     let ownProfileId = null;
 
     function refreshMyProfile(id = ownProfileId) {
-        if (id && !$('#my-profile-panel').hidden && $('#my-reviews-modal').classList.contains('is-open')) {
+        if (id && !$('#my-profile-panel').hidden && isModalOpen($('#my-reviews-modal'))) {
             return openPublicProfile(id, true);
         }
     }
 
     async function openPublicProfile(id, inline = false) {
+        const {h, render, Fragment} = Vue;
         const requestId = ++publicProfileRequest;
         const modal = $('#public-profile-modal');
         const title = $('#public-profile-title');
         const content = $(inline ? '#my-profile-panel' : '#public-profile-content');
         if (!inline) title.textContent = '个人资料';
-        content.textContent = '正在加载…';
+        render(Vue.createTextVNode('正在加载…'), content);
         if (!inline) openModal(modal);
         try {
             const profile = await api(`/api/users/${id}`);
             if (requestId !== publicProfileRequest) return;
             if (!inline) title.textContent = profile.nickname || '同学';
             if (inline && profile.is_self) ownProfileId = id;
-            content.innerHTML = `
-                <div class="profile-heading">
-                    <span class="comment-avatar">${avatarContent(profile.avatar_url, profile.nickname || '同学')}</span>
-                    ${inline ? `<h3>${escapeHtml(profile.nickname || '同学')}</h3>` : ''}
-                    ${profile.is_self ? '<button type="button" class="btn btn-soft btn-sm" data-action="edit-own-profile">编辑资料</button>' : ''}
-                </div>
-                <p>口味偏好：${escapeHtml(profile.taste || '未填写')}</p>
-                <p>出生地：${escapeHtml(profile.birthplace || '未填写')}</p>
-                <p>获赞 ${formatNumber(profile.likes_received)} <small>（公开评价）</small></p>
-                ${state.token && !profile.is_self ? `<div><button type="button" class="btn btn-soft btn-sm"
-                    data-action="toggle-follow" data-id="${Number(id)}" aria-pressed="${profile.following === true}">${profile.following ? '取消关注' : '关注'}</button></div>` : ''}
-                <div class="stack" data-author-recommendations></div>
-                <h3>历史评价</h3>
-                ${profile.reviews.length ? profile.reviews.map(review => `
-                    <article class="detail-panel">
-                        <button type="button" class="link-btn" data-action="profile-review-stall" data-id="${Number(review.canteen_id)}">${escapeHtml(review.canteen_name)}</button>
-                        <p class="muted">${escapeHtml(formatTime(review.created_at))} · ${escapeHtml(review.score)} 分</p>
-                        <p class="comment-text">${escapeHtml(review.content || '（无文字评价）')}</p>
-                        ${review.dish_name ? `<p class="comment-text">${escapeHtml(review.dish_name)}</p>` : ''}
-                        ${review.dish_scores.map(dish => `<p class="comment-text">${escapeHtml(dish.name)} · ${escapeHtml(dish.score)} 分</p>`).join('')}
-                    </article>`).join('') : '<p class="muted">暂无公开评价。</p>'}
-            `;
+            const nickname = profile.nickname || '同学';
+            render(h(Fragment, [
+                h('div', {class: 'profile-heading'}, [
+                    h('span', {class: 'comment-avatar'}, [avatarContent(profile.avatar_url, nickname)]),
+                    inline ? h('h3', nickname) : null,
+                    profile.is_self ? h('button', {type: 'button', class: 'btn btn-soft btn-sm',
+                        'data-action': 'edit-own-profile'}, '编辑资料') : null
+                ]),
+                h('p', '口味偏好：' + (profile.taste || '未填写')),
+                h('p', '出生地：' + (profile.birthplace || '未填写')),
+                h('p', ['获赞 ' + formatNumber(profile.likes_received) + ' ', h('small', '（公开评价）')]),
+                state.token && !profile.is_self ? h('div', [h('button', {type: 'button', class: 'btn btn-soft btn-sm',
+                    'data-action': 'toggle-follow', 'data-id': id, 'aria-pressed': String(profile.following === true)},
+                profile.following ? '取消关注' : '关注')]) : null,
+                h('div', {class: 'stack', 'data-author-recommendations': ''}),
+                h('h3', '历史评价'),
+                ...(profile.reviews.length ? profile.reviews.map(review => h('article', {key: review.id, class: 'detail-panel'}, [
+                    h('button', {type: 'button', class: 'link-btn', 'data-action': 'profile-review-stall',
+                        'data-id': review.canteen_id}, review.canteen_name),
+                    h('p', {class: 'muted'}, formatTime(review.created_at) + ' · ' + review.score + ' 分'),
+                    h('p', {class: 'comment-text'}, review.content || '（无文字评价）'),
+                    review.dish_name ? h('p', {class: 'comment-text'}, review.dish_name) : null,
+                    ...review.dish_scores.map(dish => h('p', {class: 'comment-text'}, dish.name + ' · ' + dish.score + ' 分'))
+                ])) : [h('p', {class: 'muted'}, '暂无公开评价。')])
+            ]), content);
             loadAuthorRecommendations(id, $('[data-author-recommendations]', content));
         } catch (error) {
-            if (requestId === publicProfileRequest) content.textContent = error.message;
+            if (requestId === publicProfileRequest) render(Vue.createTextVNode(error.message), content);
         }
     }
 
     const recommendationApi = '/api/recommendations';
 
     function recommendationCards(lists, emptyText) {
-        return lists.length ? lists.map(list => `<article class="detail-panel">
-            <button type="button" class="link-btn" data-action="recommendation-open" data-id="${Number(list.id)}">${escapeHtml(list.title)}</button>
-            ${list.is_public ? '' : '<span class="badge badge-amber">草稿</span>'}
-            ${list.description ? `<p class="comment-text">${escapeHtml(list.description)}</p>` : ''}
-        </article>`).join('') : `<p class="muted">${emptyText}</p>`;
+        const {h} = Vue;
+        return lists.length ? lists.map(list => h('article', {key: list.id, class: 'detail-panel'}, [
+            h('button', {type: 'button', class: 'link-btn', 'data-action': 'recommendation-open', 'data-id': list.id}, list.title),
+            list.is_public ? null : h('span', {class: 'badge badge-amber'}, '草稿'),
+            list.description ? h('p', {class: 'comment-text'}, list.description) : null
+        ])) : [h('p', {class: 'muted'}, emptyText)];
     }
 
     async function loadAuthorRecommendations(id, content) {
         try {
             const lists = await api(recommendationApi + '?author=' + id);
-            if (lists.length) content.innerHTML = '<h3>公开清单</h3>' + recommendationCards(lists, '');
+            if (lists.length) Vue.render(Vue.h(Vue.Fragment, [Vue.h('h3', '公开清单'), ...recommendationCards(lists, '')]), content);
         } catch (error) {
             content.textContent = error.message;
         }
     }
 
     async function loadMyRecommendations() {
+        const {h, render, Fragment} = Vue;
         const content = $('#my-recommendations-panel');
-        content.textContent = '正在加载…';
+        render(Vue.createTextVNode('正在加载…'), content);
         try {
             const [own, saved] = await Promise.all([api(recommendationApi), api(recommendationApi + '?saved=1')]);
-            content.innerHTML = `<div><button type="button" class="btn btn-primary btn-sm" data-action="recommendation-create">新建清单</button></div>
-                <h3>我创建的</h3>${recommendationCards(own, '还没有创建清单。')}
-                <h3>我收藏的</h3>${recommendationCards(saved, '还没有收藏清单。')}`;
+            render(h(Fragment, [
+                h('div', [h('button', {type: 'button', class: 'btn btn-primary btn-sm',
+                    'data-action': 'recommendation-create'}, '新建清单')]),
+                h('h3', '我创建的'), ...recommendationCards(own, '还没有创建清单。'),
+                h('h3', '我收藏的'), ...recommendationCards(saved, '还没有收藏清单。')
+            ]), content);
         } catch (error) {
-            content.textContent = error.message;
+            render(Vue.createTextVNode(error.message), content);
         }
     }
 
     function recommendationForm(list = {}) {
-        return `<form class="stack" data-recommendation-form="metadata" data-id="${Number(list.id || 0)}">
-            <label>标题<input name="title" required maxlength="60" value="${escapeHtml(list.title || '')}"></label>
-            <label>简介<textarea name="description" maxlength="500" rows="3">${escapeHtml(list.description || '')}</textarea></label>
-            <label>可见范围<select name="visibility"><option value="draft">仅自己可见 · 草稿</option>
-                <option value="public"${list.is_public ? ' selected' : ''}>公开 · 可分享</option></select></label>
-            <div><button type="submit" class="btn btn-primary btn-sm">${list.id ? '保存修改' : '创建清单'}</button></div>
-        </form>`;
+        const {h} = Vue;
+        return h('form', {class: 'stack', 'data-recommendation-form': 'metadata', 'data-id': list.id || 0}, [
+            h('label', ['标题', h('input', {name: 'title', required: true, maxlength: 60, value: list.title || ''})]),
+            h('label', ['简介', h('textarea', {name: 'description', maxlength: 500, rows: 3, value: list.description || ''})]),
+            h('label', ['可见范围', h('select', {name: 'visibility', value: list.is_public ? 'public' : 'draft'}, [
+                h('option', {value: 'draft'}, '仅自己可见 · 草稿'),
+                h('option', {value: 'public'}, '公开 · 可分享')
+            ])]),
+            h('div', [h('button', {type: 'submit', class: 'btn btn-primary btn-sm'}, list.id ? '保存修改' : '创建清单')])
+        ]);
+    }
+
+    function actionButton(label, action, className, attrs = {}) {
+        return Vue.h('button', {type: 'button', class: className, 'data-action': action, ...attrs}, label);
     }
 
     let recommendationRequest = 0;
 
     async function openRecommendation(id) {
+        const {h, render, Fragment} = Vue;
         const version = ++recommendationRequest;
         const modal = $('#recommendation-modal');
         const content = $('#recommendation-content');
-        $$('.modal.is-open').filter(item => item !== modal).forEach(closeModal);
+        closeOpenModals(modal);
         openContentRoute('#/recommendations/' + id);
         $('#recommendation-title').textContent = '美食清单';
-        content.textContent = '正在加载…';
+        render(Vue.createTextVNode('正在加载…'), content);
         openModal(modal);
         try {
             const list = await api(recommendationApi + '/' + id);
             if (version !== recommendationRequest) return;
             $('#recommendation-title').textContent = list.title;
-            content.innerHTML = `
-                <p class="muted">${escapeHtml(list.nickname || '同学')} · ${list.is_public ? '公开清单' : '草稿'}</p>
-                ${list.description ? `<p class="comment-text">${escapeHtml(list.description)}</p>` : ''}
-                <div class="feedback-review-actions">
-                    ${list.is_public ? '<button type="button" class="btn btn-ghost btn-sm" data-action="copy-content-link">复制清单链接</button>' : ''}
-                    ${list.is_public && !list.own ? `<button type="button" class="btn btn-soft btn-sm" data-action="recommendation-save" data-id="${id}" aria-pressed="${list.saved}">${list.saved ? '取消收藏' : '收藏清单'}</button>` : ''}
-                </div>
-                ${list.items.length ? list.items.map(item => `<article class="detail-panel stack">
-                    <div>
-                        ${item.is_active ? `<button type="button" class="link-btn" data-action="open-detail" data-id="${Number(item.stall_id)}">${escapeHtml(item.name)}</button>` :
-                            `<strong>${escapeHtml(item.name || '档口已移除')}</strong> <span class="badge badge-amber">已下架</span>`}
-                        <p class="muted">${escapeHtml(item.category_name || '')}</p>
-                    </div>
-                    ${item.dishes.length ? `<p>推荐菜品 · ${item.dishes.map(escapeHtml).join('、')}</p>` : ''}
-                    ${item.reason ? `<p class="comment-text">${escapeHtml(item.reason)}</p>` : ''}
-                    ${list.own ? `<div class="feedback-review-actions">
-                        <button type="button" class="btn btn-ghost btn-sm" data-action="recommendation-move" data-id="${id}" data-stall="${Number(item.stall_id)}">移到其他清单</button>
-                        <button type="button" class="btn btn-ghost btn-sm" data-action="recommendation-remove-item" data-id="${id}" data-stall="${Number(item.stall_id)}">移出清单</button>
-                    </div>` : ''}
-                </article>`).join('') : '<p class="muted">还没有收录档口。</p>'}
-                ${list.own ? `<details><summary>编辑清单</summary>${recommendationForm(list)}
-                    <button type="button" class="btn btn-ghost btn-sm" data-action="recommendation-copy" data-id="${id}">复制为草稿</button>
-                    <button type="button" class="btn btn-danger btn-sm" data-action="recommendation-delete" data-id="${id}">删除清单</button>
-                </details>` : ''}
-            `;
+            render(h(Fragment, [
+                h('p', {class: 'muted'}, (list.nickname || '同学') + (list.is_public ? ' · 公开清单' : ' · 草稿')),
+                list.description ? h('p', {class: 'comment-text'}, list.description) : null,
+                h('div', {class: 'feedback-review-actions'}, [
+                    list.is_public ? actionButton('复制清单链接', 'copy-content-link', 'btn btn-ghost btn-sm') : null,
+                    list.is_public && !list.own ? actionButton(list.saved ? '取消收藏' : '收藏清单',
+                        'recommendation-save', 'btn btn-soft btn-sm', {'data-id': id, 'aria-pressed': String(list.saved)}) : null
+                ]),
+                ...(list.items.length ? list.items.map(item => {
+                    const itemAction = {'data-id': id, 'data-stall': item.stall_id};
+                    return h('article', {key: item.stall_id, class: 'detail-panel stack'}, [
+                        h('div', [
+                            item.is_active ? actionButton(item.name, 'open-detail', 'link-btn', {'data-id': item.stall_id})
+                                : h(Fragment, [h('strong', item.name || '档口已移除'), ' ', h('span', {class: 'badge badge-amber'}, '已下架')]),
+                            h('p', {class: 'muted'}, item.category_name || '')
+                        ]),
+                        item.dishes.length ? h('p', '推荐菜品 · ' + item.dishes.join('、')) : null,
+                        item.reason ? h('p', {class: 'comment-text'}, item.reason) : null,
+                        list.own ? h('div', {class: 'feedback-review-actions'}, [
+                            actionButton('移到其他清单', 'recommendation-move', 'btn btn-ghost btn-sm', itemAction),
+                            actionButton('移出清单', 'recommendation-remove-item', 'btn btn-ghost btn-sm', itemAction)
+                        ]) : null
+                    ]);
+                }) : [h('p', {class: 'muted'}, '还没有收录档口。')]),
+                list.own ? h('details', [
+                    h('summary', '编辑清单'), recommendationForm(list),
+                    actionButton('复制为草稿', 'recommendation-copy', 'btn btn-ghost btn-sm', {'data-id': id}),
+                    actionButton('删除清单', 'recommendation-delete', 'btn btn-danger btn-sm', {'data-id': id})
+                ]) : null
+            ]), content);
         } catch (error) {
-            if (version === recommendationRequest) content.textContent = error.message;
+            if (version === recommendationRequest) render(Vue.createTextVNode(error.message), content);
         }
     }
 
     async function addStallToRecommendation(stallId) {
         if (!state.token) return openAuth();
         if (!stallId) return;
+        const {h, render} = Vue;
         const version = ++recommendationRequest;
         const content = $('#recommendation-content');
         $('#recommendation-title').textContent = '加入清单';
-        content.textContent = '正在加载…';
+        render(Vue.createTextVNode('正在加载…'), content);
         openModal($('#recommendation-modal'));
         try {
             const [lists, stall] = await Promise.all([
@@ -895,20 +961,28 @@
                 state.detailData?.id === stallId ? state.detailData : api('/api/canteens/' + stallId)
             ]);
             if (version !== recommendationRequest) return;
-            content.innerHTML = `<form class="stack" data-recommendation-form="stall" data-id="${Number(stall.id)}">
-                <strong>${escapeHtml(stall.name)}</strong>
-                ${lists.length ? `<fieldset><legend>选择清单（可多选）</legend>
-                    ${lists.map(list => `<div><label><input type="checkbox" name="list" value="${Number(list.id)}"> ${escapeHtml(list.title)}${list.is_public ? '' : '（草稿）'}</label></div>`).join('')}
-                    <label><input type="checkbox" name="list" value="new"> 新建草稿</label>
-                </fieldset><p class="muted">选多份时，已有的档口会跳过。</p>` : '<input type="hidden" name="list" value="new">'}
-                <label data-new-recommendation${lists.length ? ' hidden' : ''}>新清单标题<input name="title" maxlength="60"${lists.length ? ' disabled' : ' required'}></label>
-                ${stall.dishes?.length ? `<fieldset><legend>推荐菜品（可多选）</legend>
-                    ${stall.dishes.map(dish => `<div><label><input type="checkbox" name="dish" value="${Number(dish.id)}"> ${escapeHtml(dish.name)}</label></div>`).join('')}</fieldset>` : ''}
-                <label>推荐理由（选填）<textarea name="reason" maxlength="300" rows="3"></textarea></label>
-                <div><button type="submit" class="btn btn-primary btn-sm">保存档口</button></div>
-            </form>`;
+            const checkbox = (name, value, text) => h('label', [h('input', {type: 'checkbox', name, value}), ' ' + text]);
+            render(h('form', {class: 'stack', 'data-recommendation-form': 'stall', 'data-id': stall.id}, [
+                h('strong', stall.name),
+                lists.length ? h('fieldset', [
+                    h('legend', '选择清单（可多选）'),
+                    ...lists.map(list => h('div', {key: list.id},
+                        [checkbox('list', list.id, list.title + (list.is_public ? '' : '（草稿）'))])),
+                    checkbox('list', 'new', '新建草稿')
+                ]) : h('input', {type: 'hidden', name: 'list', value: 'new'}),
+                lists.length ? h('p', {class: 'muted'}, '选多份时，已有的档口会跳过。') : null,
+                h('label', {'data-new-recommendation': '', hidden: Boolean(lists.length)}, [
+                    '新清单标题', h('input', {name: 'title', maxlength: 60, disabled: Boolean(lists.length), required: !lists.length})
+                ]),
+                stall.dishes?.length ? h('fieldset', [
+                    h('legend', '推荐菜品（可多选）'),
+                    ...stall.dishes.map(dish => h('div', {key: dish.id}, [checkbox('dish', dish.id, dish.name)]))
+                ]) : null,
+                h('label', ['推荐理由（选填）', h('textarea', {name: 'reason', maxlength: 300, rows: 3})]),
+                h('div', [h('button', {type: 'submit', class: 'btn btn-primary btn-sm'}, '保存档口')])
+            ]), content);
         } catch (error) {
-            if (version === recommendationRequest) content.textContent = error.message;
+            if (version === recommendationRequest) render(Vue.createTextVNode(error.message), content);
         }
     }
 
@@ -926,7 +1000,7 @@
                     method: id ? 'PATCH' : 'POST',
                     body: {title: data.get('title'), description: data.get('description'), is_public: data.get('visibility') === 'public'}
                 });
-                if (form.isConnected && $('#recommendation-modal').classList.contains('is-open')) await openRecommendation(id || result.id);
+                if (form.isConnected && isModalOpen($('#recommendation-modal'))) await openRecommendation(id || result.id);
             } else if (form.dataset.recommendationForm === 'move') {
                 await api(recommendationApi + '/' + id + '/move/' + form.dataset.stall, {
                     method: 'POST', body: {target_id: Number(data.get('target'))}
@@ -998,15 +1072,18 @@
             const lists = (await api(recommendationApi)).filter(list => list.id !== id);
             if (!button.isConnected) return;
             if (!lists.length) return toast('请先创建另一份清单', 'info');
-            $('#recommendation-content').innerHTML = `<form class="stack" data-recommendation-form="move" data-id="${id}" data-stall="${stall}">
-                <label>目标清单<select name="target" required><option value="">请选择</option>
-                    ${lists.map(list => `<option value="${Number(list.id)}">${escapeHtml(list.title)}${list.is_public ? '（公开）' : '（草稿）'}</option>`).join('')}
-                </select></label>
-                <div class="feedback-review-actions">
-                    <button type="submit" class="btn btn-primary btn-sm">确认移动</button>
-                    <button type="button" class="btn btn-ghost btn-sm" data-action="recommendation-open" data-id="${id}">取消</button>
-                </div>
-            </form>`;
+            const {h, render} = Vue;
+            render(h('form', {class: 'stack', 'data-recommendation-form': 'move', 'data-id': id, 'data-stall': stall}, [
+                h('label', ['目标清单', h('select', {name: 'target', required: true}, [
+                    h('option', {value: ''}, '请选择'),
+                    ...lists.map(list => h('option', {key: list.id, value: list.id},
+                        list.title + (list.is_public ? '（公开）' : '（草稿）')))
+                ])]),
+                h('div', {class: 'feedback-review-actions'}, [
+                    h('button', {type: 'submit', class: 'btn btn-primary btn-sm'}, '确认移动'),
+                    actionButton('取消', 'recommendation-open', 'btn btn-ghost btn-sm', {'data-id': id})
+                ])
+            ]), $('#recommendation-content'));
         } catch (error) {
             toast(error.message, 'error');
         } finally {
@@ -1019,7 +1096,7 @@
         try {
             const copy = await api(recommendationApi + '/' + id + '/copy', {method: 'POST'});
             toast('已复制为草稿');
-            if (button.isConnected && $('#recommendation-modal').classList.contains('is-open')) await openRecommendation(copy.id);
+            if (button.isConnected && isModalOpen($('#recommendation-modal'))) await openRecommendation(copy.id);
         } catch (error) {
             toast(error.message, 'error');
         } finally {
@@ -1045,6 +1122,7 @@
     }
 
     async function loadFollowing(direction = followDirection) {
+        const {h, render, Fragment} = Vue;
         followDirection = direction;
         const requestId = ++followRequest;
         const list = $('#my-following-list');
@@ -1054,18 +1132,19 @@
             button.classList.toggle('btn-soft', active);
             button.classList.toggle('btn-ghost', !active);
         });
-        list.textContent = '正在加载…';
+        render(Vue.createTextVNode('正在加载…'), list);
         try {
             const users = await api('/api/my/' + direction);
             if (requestId !== followRequest) return;
-            list.innerHTML = users.map(user => `<button type="button" class="btn btn-ghost follow-user"
-                data-action="open-public-profile" data-id="${Number(user.id)}">
-                <span class="comment-avatar" aria-hidden="true">${avatarContent(user.avatar_url, user.nickname || '同学')}</span>
-                <strong>${escapeHtml(user.nickname || '同学')}</strong><span aria-hidden="true">›</span>
-                </button>`).join('')
-                || `<p class="muted">${direction === 'followers' ? '还没有人关注你。' : '还没有关注的人。'}</p>`;
+            render(users.length ? h(Fragment, users.map(user => h('button', {
+                key: user.id, type: 'button', class: 'btn btn-ghost follow-user',
+                'data-action': 'open-public-profile', 'data-id': user.id
+            }, [
+                h('span', {class: 'comment-avatar', 'aria-hidden': 'true'}, [avatarContent(user.avatar_url, user.nickname || '同学')]),
+                h('strong', user.nickname || '同学'), h('span', {'aria-hidden': 'true'}, '›')
+            ]))) : h('p', {class: 'muted'}, direction === 'followers' ? '还没有人关注你。' : '还没有关注的人。'), list);
         } catch (error) {
-            if (requestId === followRequest) list.textContent = error.message;
+            if (requestId === followRequest) render(Vue.createTextVNode(error.message), list);
         }
     }
 
@@ -1076,7 +1155,7 @@
             const result = await api(`/api/users/${id}/follow`, {method});
             button.setAttribute('aria-pressed', String(result.following));
             button.textContent = result.following ? '取消关注' : '关注';
-            if (!$('#my-following-panel').hidden && $('#my-reviews-modal').classList.contains('is-open')) await loadFollowing();
+            if (!$('#my-following-panel').hidden && isModalOpen($('#my-reviews-modal'))) await loadFollowing();
         } catch (error) {
             toast(error.message, 'error');
         } finally {
@@ -1089,11 +1168,13 @@
     function setInitialLoading() {
         const grid = $('#canteen-grid');
         if (grid) {
-            grid.innerHTML = Array.from({ length: 4 }, () => '<div class="skeleton skeleton-section"></div>').join('');
+            Vue.render(Vue.h(Vue.Fragment, Array.from({length: 4}, (_, key) =>
+                Vue.h('div', {key, class: 'skeleton skeleton-section'}))), grid);
         }
         const nav = $('#category-nav');
         if (nav) {
-            nav.innerHTML = Array.from({ length: 4 }, () => '<div class="skeleton skeleton-line"></div>').join('');
+            Vue.render(Vue.h(Vue.Fragment, Array.from({length: 4}, (_, key) =>
+                Vue.h('div', {key, class: 'skeleton skeleton-line'}))), nav);
         }
         const subtitle = $('#list-subtitle');
         if (subtitle) subtitle.textContent = '正在加载档口…';
@@ -1105,17 +1186,17 @@
             state.categories = Array.isArray(data) ? data : [];
             const dining = $('#random-food-dining');
             const previousDining = dining.value;
-            dining.replaceChildren(new Option('全部食堂', ''), ...diningGroups().map(({name}) => new Option(name, name)));
+            renderSelectOptions(dining, '全部食堂', diningGroups().map(({name}) => selectOption(name, name)));
             if (Array.from(dining.options).some(option => option.value === previousDining)) dining.value = previousDining;
             renderCategoryNav();
             if (state.view === 'ranking') renderRanking();
             renderCampusFood();
             if (state.canteensLoaded) renderHeroStats();
-            if (!$('#rating-modal').classList.contains('is-open')) fillRatingCategories();
+            if (!isModalOpen($('#rating-modal'))) fillRatingCategories();
             fillAdminCategorySelect();
         } catch (error) {
             const nav = $('#category-nav');
-            if (nav) nav.innerHTML = '<div class="admin-empty">食堂加载失败</div>';
+            if (nav) Vue.render(Vue.h('div', {class: 'admin-empty'}, '食堂加载失败'), nav);
             throw error;
         }
     }
@@ -1134,7 +1215,7 @@
             }
         } catch (error) {
             const grid = $('#canteen-grid');
-            if (grid) grid.innerHTML = errorState('档口加载失败', '请确认后端 Flask 正在运行，然后重试。');
+            if (grid) Vue.render(errorState('档口加载失败', '请确认后端 Flask 正在运行，然后重试。'), grid);
             throw error;
         }
     }
@@ -1148,11 +1229,11 @@
             renderCanteenGrid();
         } catch (error) {
             const podium = $('#podium');
-            if (podium) podium.innerHTML = errorState('排行榜加载失败', '请稍后重试。');
+            if (podium) Vue.render(errorState('排行榜加载失败', '请稍后重试。'), podium);
             const list = $('#ranking-list');
-            if (list) list.innerHTML = '';
+            if (list) Vue.render(null, list);
             const best = $('#category-best');
-            if (best) best.innerHTML = '';
+            if (best) Vue.render(null, best);
             throw error;
         }
     }
@@ -1165,16 +1246,17 @@
     /* ---------------- 首页 / 档口列表 ---------------- */
 
     function renderHeroStats() {
+        const {h, render, Fragment} = Vue;
         const container = $('#hero-stats');
         if (!container) return;
 
         const ratingRows = state.ranking.filter(row => row.avg_score !== null && row.avg_score !== undefined);
         const totalRatings = ratingRows.reduce((sum, row) => sum + (Number(row.rating_count) || 0), 0);
-        container.innerHTML = `
-            <div class="stat-card"><strong>${formatNumber(diningGroups().length)}</strong><span>食堂</span></div>
-            <div class="stat-card"><strong>${formatNumber(diningStalls().length)}</strong><span>档口</span></div>
-            <div class="stat-card"><strong>${formatNumber(totalRatings)}</strong><span>条评价</span></div>
-        `;
+        render(h(Fragment, [
+            ['食堂', diningGroups().length], ['档口', diningStalls().length], ['条评价', totalRatings]
+        ].map(([label, count]) => h('div', {key: label, class: 'stat-card'}, [
+            h('strong', formatNumber(count)), h('span', label)
+        ]))), container);
     }
 
     function renderCategoryNav() {
@@ -1198,29 +1280,38 @@
         if (!groups.some(group => group.campus === state.diningCampusFilter)) state.diningCampusFilter = '';
         const campuses = [...new Set(groups.map(group => group.campus))];
         nav.classList.add('dining-directory');
-        nav.innerHTML = `<button type="button" class="category-btn${state.categoryFilter === null && !state.diningGroupFilter && !state.diningCampusFilter ? ' is-active' : ''}" data-category="all">
-            <span class="cat-name">全部档口</span><span class="cat-count">${stalls.length}</span>
-        </button>` + campuses.map(campus => {
-            const campusGroups = groups.filter(group => group.campus === campus);
-            const campusTotal = campusGroups.reduce((sum, group) => sum + group.floors.reduce((count, floor) => count + (counts.get(String(floor.id)) || 0), 0), 0);
-            return `<div class="directory-campus">
-                <button type="button" class="category-btn campus-directory-heading${state.diningCampusFilter === campus ? ' is-active' : ''}" data-dining-campus="${escapeHtml(campus)}">
-                    <span class="cat-name">${escapeHtml(campus)}</span><span class="cat-count">${campusTotal}</span>
-                </button>
-                ${campusGroups.map((group, index) => {
-            const total = group.floors.reduce((sum, floor) => sum + (counts.get(String(floor.id)) || 0), 0);
-            return `<div class="dining-directory-group">
-                <button type="button" class="category-btn${state.diningGroupFilter === group.name ? ' is-active' : ''}" data-dining-group="${escapeHtml(group.name)}">
-                    <span class="cat-dot" style="background:${CATEGORY_DOTS[index % CATEGORY_DOTS.length]}"></span>
-                    <span class="cat-name">${escapeHtml(group.name)}</span><span class="cat-count">${total}</span>
-                </button>
-                <div class="dining-floor-links">${group.floors.map(floor => `<button type="button" class="category-btn${state.categoryFilter === floor.id ? ' is-active' : ''}" data-category="${floor.id}">
-                    <span class="cat-name">${escapeHtml(floor.label)}</span><span class="cat-count">${counts.get(String(floor.id)) || 0}</span>
-                </button>`).join('')}</div>
-            </div>`;
-                }).join('')}
-            </div>`;
-        }).join('');
+        const {h, render, Fragment} = Vue;
+        const floorCount = floor => counts.get(String(floor.id)) || 0;
+        const groupCount = group => group.floors.reduce((sum, floor) => sum + floorCount(floor), 0);
+        render(h(Fragment, [
+            directoryButton('全部档口', stalls.length,
+                state.categoryFilter === null && !state.diningGroupFilter && !state.diningCampusFilter, {'data-category': 'all'}),
+            ...campuses.map(campus => {
+                const campusGroups = groups.filter(group => group.campus === campus);
+                return h('div', {key: campus, class: 'directory-campus'}, [
+                    directoryButton(campus, campusGroups.reduce((sum, group) => sum + groupCount(group), 0),
+                        state.diningCampusFilter === campus, {'data-dining-campus': campus}, null, 'campus-directory-heading'),
+                    ...campusGroups.map((group, index) => h('div', {key: group.name, class: 'dining-directory-group'}, [
+                        directoryButton(group.name, groupCount(group), state.diningGroupFilter === group.name,
+                            {'data-dining-group': group.name}, CATEGORY_DOTS[index % CATEGORY_DOTS.length]),
+                        h('div', {class: 'dining-floor-links'}, group.floors.map(floor =>
+                            directoryButton(floor.label, floorCount(floor), state.categoryFilter === floor.id,
+                                {key: floor.id, 'data-category': floor.id})))
+                    ]))
+                ]);
+            })
+        ]), nav);
+    }
+
+    function directoryButton(name, count, selected, attrs, dot, extraClass) {
+        const {h} = Vue;
+        return h('button', {
+            type: 'button', class: ['category-btn', extraClass, {'is-active': selected}],
+            'aria-pressed': String(selected), ...attrs
+        }, [
+            dot ? h('span', {class: 'cat-dot', style: {background: dot}}) : null,
+            h('span', {class: 'cat-name'}, name), h('span', {class: 'cat-count'}, count)
+        ]);
     }
 
     function diningGroups() {
@@ -1265,14 +1356,13 @@
         const alternatives = candidates.filter(stall => String(stall.id) !== detail.dataset.id);
         const pool = alternatives.length ? alternatives : candidates;
         const stall = pool[Math.floor(Math.random() * pool.length)];
-        const copy = $('#random-food-copy');
-        const name = document.createElement('strong');
-        name.textContent = stall.name;
-        const location = document.createElement('span');
-        location.textContent = [stall.category_name || '位置待补充',
-            stall.score == null ? '暂无评分' : '评分 ' + formatScore(stall.score)].join(' · ');
-        copy.replaceChildren(name, location);
-        $('#random-food-photo').innerHTML = photoImage(stall.photo_url, '', 'stall-thumbnail');
+        const {h, render, Fragment} = Vue;
+        render(h(Fragment, [
+            h('strong', stall.name),
+            h('span', [stall.category_name || '位置待补充',
+                stall.score == null ? '暂无评分' : '评分 ' + formatScore(stall.score)].join(' · '))
+        ]), $('#random-food-copy'));
+        render(photoNode(stall.photo_url, '', 'stall-thumbnail'), $('#random-food-photo'));
         detail.dataset.id = String(stall.id);
         panel.hidden = false;
         $('#random-food-button').textContent = '换一个';
@@ -1291,10 +1381,11 @@
     }
 
     function renderCampusFood() {
+        const {h, render, Fragment} = Vue;
         const list = $('#campus-food-list');
         const buildings = getCategories().filter(category => category.kind === 'campus');
         if (!buildings.length) {
-            list.textContent = '正在加载校内楼宇…';
+            render(Vue.createTextVNode('正在加载校内楼宇…'), list);
             return;
         }
         const keyword = $('#campus-food-search').value.trim().toLowerCase();
@@ -1305,30 +1396,23 @@
         const total = Array.from(entriesByLocation.values()).reduce((sum, entries) => sum + entries.length, 0);
         const directory = buildings.map(location => ({ ...location, count: entriesByLocation.get(location.id).length }));
         const directoryGroups = [...new Set(buildings.map(campusBuildingName))];
-        const renderFloor = (location, index) => {
-            const selected = String(location.id) === campusLocationFilter;
-            return `<button type="button" class="category-btn${selected ? ' is-active' : ''}"
-                data-campus-location="${escapeHtml(location.id)}" aria-pressed="${selected}">
-                <span class="cat-dot" style="background:${index ? CATEGORY_DOTS[(index - 1) % CATEGORY_DOTS.length] : '#0f766e'}"></span>
-                <span class="cat-name">${escapeHtml(location.name)}</span><span class="cat-count">${location.count}</span>
-            </button>`;
-        };
+        const floorName = (location, building) => location.name.startsWith(building) ? location.name.slice(building.length) : location.name;
         const directoryNode = $('#campus-food-directory');
         directoryNode.classList.add('dining-directory');
-        directoryNode.innerHTML = `<button type="button" class="category-btn${!campusLocationFilter && !campusBuildingFilter ? ' is-active' : ''}"
-            data-campus-location="" aria-pressed="${!campusLocationFilter && !campusBuildingFilter}">
-            <span class="cat-name">全部地点</span><span class="cat-count">${total}</span></button>` +
-            directoryGroups.map(name => {
+        render(h(Fragment, [
+            directoryButton('全部地点', total, !campusLocationFilter && !campusBuildingFilter, {'data-campus-location': ''}),
+            ...directoryGroups.map(name => {
                 const locations = directory.filter(location => campusBuildingName(location) === name);
-                const selected = campusBuildingFilter === name;
-                return `<div class="dining-directory-group">
-                    <button type="button" class="category-btn${selected ? ' is-active' : ''}" data-campus-building="${escapeHtml(name)}" aria-pressed="${selected}">
-                        <span class="cat-name">${escapeHtml(name)}</span><span class="cat-count">${locations.reduce((sum, location) => sum + location.count, 0)}</span>
-                    </button>
-                    ${locations.length > 1 ? `<div class="dining-floor-links">${locations.map((location, index) =>
-                        renderFloor({ ...location, name: location.name.startsWith(name) ? location.name.slice(name.length) : location.name }, index)).join('')}</div>` : ''}
-                </div>`;
-            }).join('');
+                return h('div', {key: name, class: 'dining-directory-group'}, [
+                    directoryButton(name, locations.reduce((sum, location) => sum + location.count, 0),
+                        campusBuildingFilter === name, {'data-campus-building': name}),
+                    locations.length > 1 ? h('div', {class: 'dining-floor-links'}, locations.map((location, index) =>
+                        directoryButton(floorName(location, name), location.count, String(location.id) === campusLocationFilter,
+                            {key: location.id, 'data-campus-location': location.id},
+                            index ? CATEGORY_DOTS[(index - 1) % CATEGORY_DOTS.length] : '#0f766e'))) : null
+                ]);
+            })
+        ]), directoryNode);
 
         const grouped = new Map();
         let resultCount = 0;
@@ -1345,22 +1429,28 @@
         }
         $('#campus-food-count').textContent = `${formatNumber(resultCount)} 家`;
         if (!grouped.size) {
-            list.innerHTML = emptyState('没有找到相关美食', '试试其他关键词，或切回全部地点。');
+            render(emptyState('没有找到相关美食', '试试其他关键词，或切回全部地点。'), list);
             return;
         }
-        list.innerHTML = Array.from(grouped, ([building, locations]) => `<section class="detail-panel stack">
-            <div class="panel-head"><h2>${escapeHtml(building)}</h2></div>
-            ${locations.map(({ location, entries }) => {
-            return `<div>
-                <div class="panel-head"><h3>${escapeHtml((location.name.startsWith(building) ? location.name.slice(building.length) : location.name) || '全部美食')}</h3><span class="muted">${entries.length} 家</span></div>
-                ${entries.length ? entries.map(stall => `<div class="admin-row">
-                    <div class="admin-row-main"><strong>${escapeHtml(stall.name)}</strong>
-                    <p>${stall.score == null ? '暂无评分' : `${escapeHtml(stall.score)} / 5`}</p></div>
-                    <button type="button" class="btn btn-soft btn-sm" data-action="open-detail" data-id="${Number(stall.id)}">查看详情</button>
-                </div>`).join('') : '<p class="muted">还没有收录美食，欢迎推荐。</p>'}
-            </div>`;
-            }).join('')}
-        </section>`).join('');
+        render(h(Fragment, [...grouped].map(([building, locations]) => h('section', {
+            key: building, class: 'detail-panel stack'
+        }, [
+            h('div', {class: 'panel-head'}, [h('h2', building)]),
+            ...locations.map(({location, entries}) => h('div', {key: location.id}, [
+                h('div', {class: 'panel-head'}, [
+                    h('h3', floorName(location, building) || '全部美食'),
+                    h('span', {class: 'muted'}, entries.length + ' 家')
+                ]),
+                ...(entries.length ? entries.map(stall => h('div', {key: stall.id, class: 'admin-row'}, [
+                    h('div', {class: 'admin-row-main'}, [
+                        h('strong', stall.name),
+                        h('p', stall.score == null ? '暂无评分' : stall.score + ' / 5')
+                    ]),
+                    h('button', {type: 'button', class: 'btn btn-soft btn-sm', 'data-action': 'open-detail',
+                        'data-id': Number(stall.id)}, '查看详情')
+                ])) : [h('p', {class: 'muted'}, '还没有收录美食，欢迎推荐。')])
+            ]))
+        ]))), list);
     }
 
     function setCategoryFilter(value) {
@@ -1472,7 +1562,8 @@
         return null;
     }
 
-    function stallRowHtml(canteen, rankingById) {
+    function stallRow(canteen, rankingById) {
+        const {h} = Vue;
         const parts = {
             slot: canteen.slot_number ?? splitStallName(canteen.name).slot,
             name: canteen.display_name ?? splitStallName(canteen.name).name
@@ -1481,20 +1572,22 @@
         const hasScore = canteen.score !== null && canteen.score !== undefined;
         const reviews = ranking ? Number(ranking.rating_count) || 0 : 0;
 
-        return `<button type="button" class="stall-row" data-action="open-detail" data-id="${canteen.id}" title="${escapeHtml(canteen.name)}">
-            <span class="slot-badge${parts.slot ? '' : ' is-empty'}">${escapeHtml(parts.slot || '·')}</span>
-            ${canteen.photo_url ? photoImage(canteen.photo_url, '', 'stall-thumbnail') : '<span class="stall-thumbnail" aria-hidden="true"></span>'}
-            <span class="stall-row-main">
-                <span class="stall-row-name">${escapeHtml(parts.name)}</span>
-            </span>
-            <span class="stall-row-score${hasScore ? '' : ' is-empty'}">${hasScore ? `★ ${formatScore(canteen.score)}` : '暂无评分'}</span>
-            <span class="stall-row-reviews">${reviews ? `${formatNumber(reviews)} 条` : ''}</span>
-            <span class="stall-row-arrow" aria-hidden="true">›</span>
-        </button>`;
+        return h('button', {key: canteen.id, type: 'button', class: 'stall-row',
+            'data-action': 'open-detail', 'data-id': canteen.id, title: canteen.name}, [
+            h('span', {class: ['slot-badge', {'is-empty': !parts.slot}]}, parts.slot || '·'),
+            canteen.photo_url
+                ? h('img', {class: 'stall-thumbnail', src: (window.CANTEEN_API_ORIGIN || '') + canteen.photo_url, alt: '', loading: 'lazy'})
+                : h('span', {class: 'stall-thumbnail', 'aria-hidden': 'true'}),
+            h('span', {class: 'stall-row-main'}, [h('span', {class: 'stall-row-name'}, parts.name)]),
+            h('span', {class: ['stall-row-score', {'is-empty': !hasScore}]}, hasScore ? `★ ${formatScore(canteen.score)}` : '暂无评分'),
+            h('span', {class: 'stall-row-reviews'}, reviews ? `${formatNumber(reviews)} 条` : ''),
+            h('span', {class: 'stall-row-arrow', 'aria-hidden': 'true'}, '›')
+        ]);
     }
 
     function renderCategoryBlock(group, options) {
-        const { single, searching, index, rankingById } = options;
+        const {h} = Vue;
+        const {single, searching, rankingById} = options;
         const expanded = single || searching || state.expandedCategories.has(group.key);
         const visibleItems = expanded ? group.items : group.items.slice(0, 3);
         const collapsible = !single && !searching && group.items.length > 3;
@@ -1503,30 +1596,26 @@
         const floor = diningGroups().flatMap(parent => parent.floors).find(item => item.id === group.id);
         const floorName = floor?.label.split(' · ')[0];
         const hasFloor = /^[一二三四五六七八九十\d]+楼$/.test(floorName || '');
-        const inner = `<span class="floor-heading-badge">${escapeHtml(hasFloor ? floorName : '餐厅')}</span>
-                <span class="category-title">${escapeHtml(group.name)}</span>
-                <span class="category-stats">${stats}</span>
-                ${collapsible ? `<span class="category-chevron" aria-hidden="true">${expanded ? '▴' : '▾'}</span>` : ''}`;
-
-        const header = collapsible
-                ? `<button type="button" class="category-head" data-action="toggle-category" data-id="${escapeHtml(group.key)}" aria-expanded="${expanded}">${inner}</button>`
-                : `<div class="category-head is-static">${inner}</div>`;
-        const rows = visibleItems.map(canteen => stallRowHtml(canteen, rankingById)).join('');
-        const footer = collapsible
-            ? `<button type="button" class="category-more" data-action="toggle-category" data-id="${escapeHtml(group.key)}">${expanded ? '收起' : `展开全部 ${formatNumber(group.items.length)} 个档口`}</button>`
-            : '';
-
-        return `<section class="category-block${single ? ' is-single' : ''}">
-            ${header}
-            <div class="stall-list">${rows}</div>
-            ${footer}
-        </section>`;
+        const toggle = {type: 'button', 'data-action': 'toggle-category', 'data-id': group.key};
+        const heading = [
+            h('span', {class: 'floor-heading-badge'}, hasFloor ? floorName : '餐厅'),
+            h('span', {class: 'category-title'}, group.name),
+            h('span', {class: 'category-stats'}, stats),
+            collapsible ? h('span', {class: 'category-chevron', 'aria-hidden': 'true'}, expanded ? '▴' : '▾') : null
+        ];
+        return h('section', {key: group.key, class: ['category-block', {'is-single': single}]}, [
+            collapsible
+                ? h('button', {...toggle, class: 'category-head', 'aria-expanded': String(expanded)}, heading)
+                : h('div', {class: 'category-head is-static'}, heading),
+            h('div', {class: 'stall-list'}, visibleItems.map(canteen => stallRow(canteen, rankingById))),
+            collapsible ? h('button', {...toggle, class: 'category-more'},
+                expanded ? '收起' : `展开全部 ${formatNumber(group.items.length)} 个档口`) : null
+        ]);
     }
 
     function updateListToolbar(single, searching) {
         const picker = $('#stall-food-type');
-        $$('.food-choice', picker).forEach(button => button.setAttribute('aria-pressed', String(state.foodType.includes(button.value))));
-        updateFoodPickerSummary(picker);
+        renderFoodPicker(picker);
         const rated = $('#rated-toggle');
         if (rated) {
             rated.classList.toggle('is-active', state.ratedOnly);
@@ -1544,10 +1633,11 @@
 
     function renderCanteenGrid() {
         const grid = $('#canteen-grid');
-        if (!grid || !state.canteensLoaded) return;
+        if (!grid || !state.canteensLoaded || !initialRouteReady) return;
+        const {h, render} = Vue;
 
         if (!diningStalls().length) {
-            grid.innerHTML = emptyState('还没有档口', '请管理员先在后台添加食堂和档口。');
+            render(emptyState('还没有档口', '请管理员先在后台添加食堂和档口。'), grid);
             updateListHeading([], [], new Map());
             updateListToolbar(false, false);
             return;
@@ -1563,34 +1653,35 @@
         updateListToolbar(single, searching);
 
         if (!rows.length) {
-            grid.innerHTML = `<div class="empty-state">
-                <div class="empty-icon">🔍</div>
-                <h3>没有找到相关档口</h3>
-                <p>换个关键词，或者看看全部档口。</p>
-                <button type="button" class="btn btn-soft btn-sm" style="margin-top:14px" data-action="reset-filters">查看全部</button>
-            </div>`;
+            render(h('div', {class: 'empty-state'}, [
+                h('div', {class: 'empty-icon'}, '🔍'),
+                h('h3', '没有找到相关档口'),
+                h('p', '换个关键词，或者看看全部档口。'),
+                h('button', {type: 'button', class: 'btn btn-soft btn-sm', style: {marginTop: '14px'},
+                    'data-action': 'reset-filters'}, '查看全部')
+            ]), grid);
             return;
         }
 
-        const blocks = groups.map((group, index) => ({ group, html: renderCategoryBlock(group, {
-            single,
-            searching,
-            index,
-            rankingById
-        }) }));
-        if (single) grid.innerHTML = blocks.map(block => block.html).join('');
-        else {
-            const parents = diningGroups();
-            grid.innerHTML = [...new Set(parents.map(parent => parent.campus))].map(campus => {
-                const sections = parents.filter(parent => parent.campus === campus).map(parent => {
-                const floors = blocks.filter(block => parent.floors.some(floor => floor.id === block.group.id));
-                return floors.length ? `<section class="dining-result-group stack"><h2>${escapeHtml(parent.name)}</h2>${floors.map(floor => floor.html).join('')}</section>` : '';
-                }).join('');
-                return sections ? `<section class="campus-result-section stack"><h2 class="campus-result-title">${escapeHtml(campus)}</h2>${sections}</section>` : '';
-            }).join('');
-            const ungrouped = blocks.filter(block => !parents.some(parent => parent.floors.some(floor => floor.id === block.group.id)));
-            grid.insertAdjacentHTML('beforeend', ungrouped.map(block => block.html).join(''));
+        const block = group => renderCategoryBlock(group, {single, searching, rankingById});
+        if (single) {
+            render(h(Vue.Fragment, groups.map(block)), grid);
+            return;
         }
+        const parents = diningGroups();
+        const sections = [...new Set(parents.map(parent => parent.campus))].map(campus => {
+            const buildings = parents.filter(parent => parent.campus === campus).flatMap(parent => {
+                const floors = groups.filter(group => parent.floors.some(floor => floor.id === group.id));
+                return floors.length ? [h('section', {key: parent.name, class: 'dining-result-group stack'}, [
+                    h('h2', parent.name), ...floors.map(block)
+                ])] : [];
+            });
+            return buildings.length ? h('section', {key: 'campus:' + campus, class: 'campus-result-section stack'}, [
+                h('h2', {class: 'campus-result-title'}, campus), ...buildings
+            ]) : null;
+        });
+        const ungrouped = groups.filter(group => !parents.some(parent => parent.floors.some(floor => floor.id === group.id)));
+        render(h(Vue.Fragment, [...sections, ...ungrouped.map(block)]), grid);
     }
 
     function updateListHeading(rows, groups, rankingById) {
@@ -1688,6 +1779,7 @@
     }
 
     function renderRanking() {
+        const {h, render, Fragment} = Vue;
         const podium = $('#podium');
         const list = $('#ranking-list');
         const best = $('#category-best');
@@ -1700,17 +1792,17 @@
         const minimum = Number($('#ranking-min').value);
         const locations = rankingLocations();
         const selected = scope.value;
-        scope.replaceChildren(new Option('全部食堂', ''));
-        for (const [prefix, title] of [['campus:', '校区'], ['dining:', '食堂'], ['floor:', '楼层']]) {
-            const options = document.createElement('optgroup');
-            options.label = title;
-            for (const [key, location] of locations) {
-                if (key.startsWith(prefix)) options.append(new Option(location.name, key));
-            }
-            if (options.children.length) scope.append(options);
-        }
-        if (locations.has(selected)) scope.value = selected;
-        const floors = locations.get(scope.value)?.floors;
+        const active = locations.has(selected) ? selected : '';
+        render(h(Fragment, [
+            h('option', {value: ''}, '全部食堂'),
+            ...[['campus:', '校区'], ['dining:', '食堂'], ['floor:', '楼层']].map(([prefix, label]) => {
+                const options = [...locations].filter(([key]) => key.startsWith(prefix));
+                return options.length ? h('optgroup', {key: prefix, label},
+                    options.map(([key, location]) => h('option', {key, value: key}, location.name))) : null;
+            })
+        ]), scope);
+        scope.value = active;
+        const floors = locations.get(active)?.floors;
         const rows = state.ranking.filter(row => row.avg_score != null && matchesFoodType(row, foodType) &&
             row.rating_count >= minimum && (!floors || floors.has(row.category_name)));
         const byScore = (a, b) => b.avg_score - a.avg_score;
@@ -1719,90 +1811,64 @@
             : byScore(a, b) || byCount(a, b)) || a.id - b.id);
         if (count) count.textContent = rows.length ? `${formatNumber(rows.length)} 个档口有评分` : '';
 
-        if (!rows.length) {
-            podium.innerHTML = state.ranking.length
-                ? emptyState('没有符合条件的档口', '试试扩大范围或降低最低评价数。')
-                : emptyState('还没有评分', '等同学们写下第一条评价，排行榜就会出现在这里。');
-            list.innerHTML = '';
-            best.innerHTML = '';
-            return;
-        }
-
         const top = rows.slice(0, 3);
-        const podiumItems = [];
-        if (top.length >= 3) {
-            podiumItems.push({ row: top[1], rank: 2 });
-            podiumItems.push({ row: top[0], rank: 1 });
-            podiumItems.push({ row: top[2], rank: 3 });
-        } else if (top.length === 2) {
-            podiumItems.push({ row: top[0], rank: 1 });
-            podiumItems.push({ row: top[1], rank: 2 });
-        } else if (top.length === 1) {
-            podiumItems.push({ row: top[0], rank: 1 });
-        }
         podium.classList.toggle('is-two', top.length === 2);
         podium.classList.toggle('is-one', top.length === 1);
-
-        podium.innerHTML = podiumItems.map(({ row, rank }) => `
-            <article class="podium-card${rank === 1 ? ' is-first' : ''}">
-                <div class="podium-medal">${rank}</div>
-                <h3>${escapeHtml(row.name)}</h3>
-                <p class="muted">${escapeHtml(row.category_name || '未分类')}</p>
-                <div class="podium-score">${order === 'count'
-                    ? `${formatNumber(row.rating_count)}<small> 条评价</small>`
-                    : `${formatScore(row.avg_score)}<small> / 5</small>`}</div>
-                <button type="button" class="btn btn-soft btn-sm" data-action="open-detail" data-id="${row.id}">查看评价</button>
-            </article>
-        `).join('');
-
-        if (state.rankingMode === 'category') {
-            const grouped = new Map();
-            rows.forEach(row => {
-                const key = row.category_name || '未分类';
-                if (!grouped.has(key)) grouped.set(key, []);
-                grouped.get(key).push(row);
-            });
-
-            list.innerHTML = Array.from(grouped.entries()).map(([category, items]) => `
-                <div class="ranking-group">
-                    <div class="ranking-group-title">
-                        <span>${escapeHtml(category)}</span>
-                        <span class="muted">${formatNumber(items.length)} 个档口</span>
-                    </div>
-                    ${items.map((row, index) => rankingRowHtml(row, index)).join('')}
-                </div>
-            `).join('');
-        } else {
-            list.innerHTML = rows.map((row, index) => rankingRowHtml(row, index)).join('');
-        }
+        const podiumOrder = top.length === 3 ? [1, 0, 2] : top.map((_, index) => index);
+        const metric = row => order === 'count' ? formatNumber(row.rating_count) : formatScore(row.avg_score);
+        render(top.length ? h(Fragment, podiumOrder.map(index => {
+            const row = top[index];
+            return h('article', {key: row.id, class: ['podium-card', {'is-first': index === 0}]}, [
+                h('div', {class: 'podium-medal'}, index + 1),
+                h('h3', row.name),
+                h('p', {class: 'muted'}, row.category_name || '未分类'),
+                h('div', {class: 'podium-score'}, [metric(row), h('small', order === 'count' ? ' 条评价' : ' / 5')]),
+                rankingDetailButton(row, 'btn btn-soft btn-sm', '查看评价')
+            ]);
+        })) : h('div', {class: 'empty-state'}, [
+            h('div', {class: 'empty-icon', 'aria-hidden': 'true'}, '🍽️'),
+            h('h3', state.ranking.length ? '没有符合条件的档口' : '还没有评分'),
+            h('p', state.ranking.length ? '试试扩大范围或降低最低评价数。' : '等同学们写下第一条评价，排行榜就会出现在这里。')
+        ]), podium);
 
         const groups = new Map();
-        rows.forEach(row => {
-            const key = row.category_name || '未分类';
-            if (!groups.has(key)) groups.set(key, row);
-        });
-
-        best.innerHTML = Array.from(groups.entries()).map(([category, row]) => `
-            <div class="best-row">
-                <div class="best-row-main">
-                    <strong>${escapeHtml(category)}</strong>
-                    <span>${escapeHtml(row.name)}</span>
-                </div>
-                <span class="best-score">${order === 'count' ? formatNumber(row.rating_count) + ' 条' : formatScore(row.avg_score)}</span>
-            </div>
-        `).join('');
+        for (const row of rows) {
+            const category = row.category_name || '未分类';
+            if (!groups.has(category)) groups.set(category, []);
+            groups.get(category).push(row);
+        }
+        const grouped = [...groups];
+        render(h(Fragment, state.rankingMode === 'category'
+            ? grouped.map(([category, items]) => h('div', {key: category, class: 'ranking-group'}, [
+                h('div', {class: 'ranking-group-title'}, [
+                    h('span', category), h('span', {class: 'muted'}, formatNumber(items.length) + ' 个档口')
+                ]),
+                ...items.map(rankingRow)
+            ]))
+            : rows.map(rankingRow)), list);
+        render(h(Fragment, grouped.map(([category, [row]]) => h('div', {key: category, class: 'best-row'}, [
+            h('div', {class: 'best-row-main'}, [h('strong', category), h('span', row.name)]),
+            h('span', {class: 'best-score'}, metric(row) + (order === 'count' ? ' 条' : ''))
+        ]))), best);
     }
 
-    function rankingRowHtml(row, index) {
-        return `<div class="ranking-row">
-            <span class="rank-num${index < 3 ? ' is-top' : ''}">${index + 1}</span>
-            <div class="ranking-main">
-                <div class="ranking-name">${escapeHtml(row.name)}</div>
-                <div class="ranking-meta">${escapeHtml(row.category_name || '未分类')} · ${formatNumber(row.rating_count)} 条评价</div>
-            </div>
-            <span class="ranking-score">${formatScore(row.avg_score)}</span>
-            <button type="button" class="ranking-open" data-action="open-detail" data-id="${row.id}" aria-label="查看 ${escapeHtml(row.name)} 的评价">›</button>
-        </div>`;
+    function rankingDetailButton(row, className, label, ariaLabel) {
+        return Vue.h('button', {
+            type: 'button', class: className, 'data-action': 'open-detail', 'data-id': row.id, 'aria-label': ariaLabel
+        }, label);
+    }
+
+    function rankingRow(row, index) {
+        const {h} = Vue;
+        return h('div', {key: row.id, class: 'ranking-row'}, [
+            h('span', {class: ['rank-num', {'is-top': index < 3}]}, index + 1),
+            h('div', {class: 'ranking-main'}, [
+                h('div', {class: 'ranking-name'}, row.name),
+                h('div', {class: 'ranking-meta'}, (row.category_name || '未分类') + ' · ' + formatNumber(row.rating_count) + ' 条评价')
+            ]),
+            h('span', {class: 'ranking-score'}, formatScore(row.avg_score)),
+            rankingDetailButton(row, 'ranking-open', '›', '查看 ' + row.name + ' 的评价')
+        ]);
     }
 
     function setRankingMode(mode) {
@@ -1824,19 +1890,13 @@
 
         if (!applyingRoute) {
             saveRouteState();
-            $$('.modal.is-open').forEach(closeModal);
+            closeOpenModals();
             state.view = name;
             const hash = listHash();
             if (window.location.hash !== hash) history.pushState(null, '', hash);
             activeRouteHash = hash;
         }
-        state.view = name;
-        $$('.view').forEach(view => {
-            const active = view.id === `view-${name}`;
-            view.hidden = !active;
-            view.classList.toggle('is-active', active);
-        });
-        $$('.nav-link').forEach(link => link.classList.toggle('is-active', link.dataset.nav === name));
+        if (applyingRoute) state.view = name;
         if (!applyingRoute) window.scrollTo({ top: 0, behavior: 'instant' });
 
         if (name === 'ranking') renderRanking();
@@ -1847,6 +1907,15 @@
         if (name === 'campus') renderCampusFood();
         if (name === 'forum' && !applyingRoute) loadForum();
         if (name === 'admin') loadAdminAll();
+    }
+
+    function renderActiveView(name) {
+        $$('.view').forEach(view => {
+            const active = view.id === `view-${name}`;
+            view.hidden = !active;
+            view.classList.toggle('is-active', active);
+        });
+        renderNavigation();
     }
 
     async function ensurePostingIdentity() {
@@ -1861,22 +1930,29 @@
     let forumCachedRows = [];
     let threadId = null;
     let replyCursor = 0;
+    let forumReplies = [];
     let forumThreadRequest = 0;
 
     function forumBadge(kind) {
-        return kind === 'avoid' ? '<span class="badge badge-red">避雷</span>' : '<span class="badge badge-amber">推荐</span>';
+        const avoid = kind === 'avoid';
+        return Vue.h('span', {class: avoid ? 'badge badge-red' : 'badge badge-amber'}, avoid ? '避雷' : '推荐');
     }
 
-    function forumRowsHtml(rows) {
-        return rows.map(post => `<article class="detail-panel stack">
-            <div class="panel-head"><h3>${forumBadge(post.kind)} ${escapeHtml(post.name)}</h3></div>
-            <p class="muted">${escapeHtml(post.address)}</p>
-            <p class="comment-text">${escapeHtml(post.content)}</p>
-            <div class="panel-head">
-                <span class="muted">${escapeHtml(post.author)} · ${escapeHtml(formatTime(post.created_at))}</span>
-                <button type="button" class="btn btn-soft btn-sm" data-action="forum-open" data-id="${Number(post.id)}">查看帖子 · ${formatNumber(post.reply_count)} 条回复</button>
-            </div>
-        </article>`).join('');
+    function renderForumRows() {
+        const {h, render, Fragment} = Vue;
+        render(forumCachedRows.length ? h(Fragment, forumCachedRows.map(post => h('article', {
+            key: post.id, class: 'detail-panel stack'
+        }, [
+            h('div', {class: 'panel-head'}, [h('h3', [forumBadge(post.kind), ' ' + post.name])]),
+            h('p', {class: 'muted'}, post.address),
+            h('p', {class: 'comment-text'}, post.content),
+            h('div', {class: 'panel-head'}, [
+                h('span', {class: 'muted'}, post.author + ' · ' + formatTime(post.created_at)),
+                h('button', {type: 'button', class: 'btn btn-soft btn-sm', 'data-action': 'forum-open', 'data-id': post.id},
+                    '查看帖子 · ' + formatNumber(post.reply_count) + ' 条回复')
+            ])
+        ]))) : emptyState('这里还没有帖子', '欢迎分享你的校外美食推荐或避雷经历。'),
+        $('#forum-post-list'));
     }
 
     async function loadForum(append = false) {
@@ -1887,29 +1963,28 @@
         if (!append) {
             forumCursor = 0;
             more.hidden = true;
-            list.textContent = '正在加载帖子…';
+            Vue.render(Vue.createTextVNode('正在加载帖子…'), list);
         }
         try {
             const kind = $('#forum-kind-filter').value;
             const data = await api(`/api/forum/posts?kind=${encodeURIComponent(kind)}&cursor=${forumCursor}`);
             if (request !== forumListRequest) return;
-            const html = forumRowsHtml(data.rows);
             forumCachedRows = append ? forumCachedRows.concat(data.rows) : data.rows;
-            if (append) list.insertAdjacentHTML('beforeend', html);
-            else list.innerHTML = html || emptyState('这里还没有帖子', '欢迎分享你的校外美食推荐或避雷经历。');
+            renderForumRows();
             forumCursor = data.rows.at(-1)?.id ?? forumCursor;
             more.hidden = !data.more;
             saveRouteState();
         } catch (error) {
             if (request !== forumListRequest) return;
             if (append) toast(error.message, 'error');
-            else list.textContent = error.message;
+            else Vue.render(Vue.createTextVNode(error.message), list);
         } finally {
             if (request === forumListRequest) more.disabled = false;
         }
     }
 
     async function openForumThread(id, append = false) {
+        const {h, render, Fragment} = Vue;
         if (!append) openContentRoute('#/forum/posts/' + id);
         const request = ++forumThreadRequest;
         const modal = $('#forum-thread-modal');
@@ -1924,27 +1999,31 @@
             form.reset();
             clearError($('#forum-reply-error'));
             form.hidden = more.hidden = true;
-            replies.replaceChildren();
-            content.textContent = '正在加载帖子…';
+            forumReplies = [];
+            render(null, replies);
+            render(Vue.createTextVNode('正在加载帖子…'), content);
             openModal(modal);
         }
         try {
             const { post, rows, more: hasMore } = await api(`/api/forum/posts/${id}?cursor=${replyCursor}`);
             if (request !== forumThreadRequest) return;
-            content.innerHTML = `<article class="detail-panel stack">
-                <h3>${forumBadge(post.kind)} ${escapeHtml(post.name)}</h3>
-                <p>地址：${escapeHtml(post.address)}</p>
-                <p class="comment-text">${escapeHtml(post.content)}</p>
-                <p class="muted">1 楼 · ${escapeHtml(post.author)} · ${escapeHtml(formatTime(post.created_at))}</p>
-                <div><button type="button" class="btn btn-soft btn-sm" data-action="copy-content-link">复制帖子链接</button></div>
-                ${post.can_delete ? `<div><button type="button" class="link-btn" data-action="forum-delete" data-id="${Number(post.id)}">删除帖子</button></div>` : ''}
-            </article>`;
-            const html = rows.map(reply => `<article class="detail-panel">
-                <p class="muted">${formatNumber(reply.floor)} 楼 · ${escapeHtml(reply.author)} · ${escapeHtml(formatTime(reply.created_at))}</p>
-                <p class="comment-text">${escapeHtml(reply.content)}</p>
-            </article>`).join('');
-            if (append && replyCursor) replies.insertAdjacentHTML('beforeend', html);
-            else replies.innerHTML = html || '<p class="muted">还没有回复，来盖第一楼吧。</p>';
+            render(h('article', {class: 'detail-panel stack'}, [
+                h('h3', [forumBadge(post.kind), ' ' + post.name]),
+                h('p', '地址：' + post.address),
+                h('p', {class: 'comment-text'}, post.content),
+                h('p', {class: 'muted'}, '1 楼 · ' + post.author + ' · ' + formatTime(post.created_at)),
+                h('div', [h('button', {type: 'button', class: 'btn btn-soft btn-sm',
+                    'data-action': 'copy-content-link'}, '复制帖子链接')]),
+                post.can_delete ? h('div', [h('button', {type: 'button', class: 'link-btn',
+                    'data-action': 'forum-delete', 'data-id': post.id}, '删除帖子')]) : null
+            ]), content);
+            forumReplies = append && replyCursor ? forumReplies.concat(rows) : rows;
+            render(forumReplies.length ? h(Fragment, forumReplies.map(reply => h('article', {
+                key: reply.floor, class: 'detail-panel'
+            }, [
+                h('p', {class: 'muted'}, formatNumber(reply.floor) + ' 楼 · ' + reply.author + ' · ' + formatTime(reply.created_at)),
+                h('p', {class: 'comment-text'}, reply.content)
+            ]))) : h('p', {class: 'muted'}, '还没有回复，来盖第一楼吧。'), replies);
             replyCursor = rows.at(-1)?.floor ?? replyCursor;
             more.hidden = !hasMore;
             form.hidden = false;
@@ -1952,15 +2031,10 @@
             if (request !== forumThreadRequest) return;
             if (append) toast(error.message, 'error');
             else {
-                content.replaceChildren();
-                const message = document.createElement('p');
-                message.textContent = error.status === 404 ? '帖子已删除或不存在。' : error.message;
-                const back = document.createElement('button');
-                back.type = 'button';
-                back.className = 'btn btn-soft';
-                back.textContent = '返回论坛';
-                back.setAttribute('data-close-modal', '');
-                content.append(message, back);
+                render(h(Fragment, [
+                    h('p', error.status === 404 ? '帖子已删除或不存在。' : error.message),
+                    h('button', {type: 'button', class: 'btn btn-soft', 'data-close-modal': ''}, '返回论坛')
+                ]), content);
             }
         } finally {
             if (request === forumThreadRequest) more.disabled = false;
@@ -2000,7 +2074,7 @@
             const body = Object.fromEntries(new FormData(event.target));
             await ensurePostingIdentity();
             const reply = await api(`/api/forum/posts/${id}/replies`, { method: 'POST', body });
-            if (threadId === id && $('#forum-thread-modal').classList.contains('is-open')) {
+            if (threadId === id && isModalOpen($('#forum-thread-modal'))) {
                 event.target.reset();
                 await openForumThread(id, true);
             }
@@ -2027,6 +2101,7 @@
     }
 
     async function openDetail(id) {
+        const {h, render} = Vue;
         const canteenId = Number(id);
         if (!canteenId) return;
 
@@ -2036,7 +2111,8 @@
         destroyChart();
         openModal($('#detail-modal'));
         const content = $('#detail-content');
-        content.innerHTML = detailSkeleton();
+        unmountStallControls();
+        render(detailSkeleton(), content);
 
         try {
             const [data, reviewLabels] = await Promise.all([
@@ -2047,115 +2123,66 @@
             renderDetail(data, reviewLabels);
         } catch (error) {
             if (state.detailId !== canteenId) return;
-            content.innerHTML = `<div class="detail-body">
-                <div class="empty-state">
-                    <div class="empty-icon">⚠️</div>
-                    <h3>加载失败</h3>
-                    <p>${escapeHtml(error.message)}</p>
-                    <button type="button" class="btn btn-soft btn-sm" style="margin-top:14px" data-action="open-detail" data-id="${canteenId}">重试</button>
-                    <button type="button" class="btn btn-ghost btn-sm" data-close-modal>返回列表</button>
-                </div>
-            </div>`;
+            render(h('div', {class: 'detail-body'}, [
+                h('div', {class: 'empty-state'}, [
+                    h('div', {class: 'empty-icon'}, '⚠️'), h('h3', '加载失败'), h('p', error.message),
+                    actionButton('重试', 'open-detail', 'btn btn-soft btn-sm', {'data-id': canteenId, style: {marginTop: '14px'}}),
+                    h('button', {type: 'button', class: 'btn btn-ghost btn-sm', 'data-close-modal': ''}, '返回列表')
+                ])
+            ]), content);
         }
     }
 
     function detailSkeleton() {
-        return `<div class="detail-hero">
-            <div class="skeleton" style="width:110px;height:16px;background:rgba(255,255,255,.2)"></div>
-            <div class="skeleton" style="width:58%;height:32px;margin-top:14px;background:rgba(255,255,255,.18)"></div>
-            <div class="skeleton" style="width:38%;height:14px;margin-top:12px;background:rgba(255,255,255,.14)"></div>
-        </div>
-        <div class="detail-body">
-            <div class="skeleton" style="height:220px"></div>
-            <div class="skeleton" style="height:160px"></div>
-        </div>`;
+        const {h, Fragment} = Vue;
+        const skeleton = style => h('div', {class: 'skeleton', style});
+        return h(Fragment, [
+            h('div', {class: 'detail-hero'}, [
+                skeleton('width:110px;height:16px;background:rgba(255,255,255,.2)'),
+                skeleton('width:58%;height:32px;margin-top:14px;background:rgba(255,255,255,.18)'),
+                skeleton('width:38%;height:14px;margin-top:12px;background:rgba(255,255,255,.14)')
+            ]),
+            h('div', {class: 'detail-body'}, [skeleton('height:220px'), skeleton('height:160px')])
+        ]);
     }
 
     function renderDetail(data, reviewLabels = null) {
         const content = $('#detail-content');
         if (!content) return;
+        data = Vue.reactive(data);
         state.detailData = data;
 
         const comments = Array.isArray(data.comments) ? data.comments : [];
         const history = Array.isArray(data.history) ? data.history : [];
-        const scoreText = formatScore(data.score);
+        Vue.render(null, content);
+        stallControlUnmounts.push(window.mountStallDetail(content, data, {
+            origin: window.CANTEEN_API_ORIGIN || '',
+            meta: `${formatNumber(comments.length)} 条评价${history.length ? ` · ${formatNumber(history.length)} 个历史快照` : ''}`,
+            score: formatScore(data.score),
+            stars: starNodes(data.score),
+            adminPanel: state.isAdmin ? () => renderStallManagement(data) : null,
+            hasHistory: Boolean(history.length),
+            historyFallback: typeof Chart === 'undefined' ? history.map(item => {
+                const average = item.avg_score == null ? '暂无评分' : formatScore(item.avg_score) + ' 分';
+                return formatTime(item.date) + '（' + average + ' / ' + formatNumber(item.rating_count) + ' 条）';
+            }) : null,
+            reviewCount: comments.length,
+            emptyReviews: emptyState('还没有评论', '来写下第一条评价吧。', '💬'),
+            showDishes: !state.isAdmin,
+            formatNumber
+        }));
 
-        content.innerHTML = `
-            <div class="detail-hero">
-                <span class="tag tag-light">${escapeHtml(data.category_name || '未分类')}</span>
-                <div class="detail-photo-row">
-                    <span data-managed-photo>${photoImage(data.photo_url, data.name)}</span>
-                    <div>
-                        <h2 id="detail-title">${escapeHtml(data.name)}</h2>
-                    </div>
-                </div>
-                <p class="detail-meta">${formatNumber(comments.length)} 条评价${history.length ? ` · ${formatNumber(history.length)} 个历史快照` : ''}</p>
-                <div class="detail-score-row">
-                    <div class="detail-score">${scoreText}<small>/5</small></div>
-                    <div>
-                        <div class="stars">${starsHtml(data.score)}</div>
-                        <div class="detail-meta">综合评分</div>
-                    </div>
-                    <div class="detail-actions">
-                        <button type="button" class="btn btn-light btn-sm" data-action="open-rating" data-id="${Number(data.id)}">写评价</button>
-                        <button type="button" class="btn btn-ghost-light btn-sm" data-action="copy-content-link">复制链接</button>
-                        <button type="button" class="btn btn-ghost-light btn-sm" data-action="recommendation-add-stall" data-id="${Number(data.id)}">加入清单</button>
-                        <button type="button" class="btn btn-ghost-light btn-sm" data-action="feedback-stall-issue">问题反馈</button>
-                    </div>
-                </div>
-            </div>
-            <div class="detail-body">
-                ${state.isAdmin ? renderStallManagement(data) : ''}
-                ${data.dishes?.length && !state.isAdmin ? `<section class="detail-panel">
-                    <div class="panel-head"><h3>档口菜品</h3></div>
-                    ${data.dishes.map(dish => `<div class="detail-photo-row dish-photo-row">
-                        ${photoImage(dish.photo_url, dish.name)}
-                        <div><strong>${escapeHtml(dish.name)}</strong>
-                            <p class="muted">${dish.rating_count ? `${escapeHtml(dish.score)} / 5 · ${formatNumber(dish.rating_count)} 人评分` : '暂无菜品评分'}</p>
-                        </div>
-                    </div>`).join('')}
-                </section>` : ''}
-                ${history.length ? `<section class="detail-panel">
-                    <div class="panel-head">
-                        <h3>评分趋势</h3>
-                        <span class="muted">历史平均分</span>
-                    </div>
-                    <div class="chart-wrap"><canvas id="history-chart"></canvas></div>
-                </section>` : ''}
-                <section class="detail-panel">
-                    <div class="panel-head">
-                        <h3>同学们怎么说</h3>
-                        <span class="muted">${formatNumber(comments.length)} 条</span>
-                    </div>
-                    ${comments.length ? `<div class="review-filters">
-                        <label>排序 <select id="detail-review-sort">
-                            <option value="newest">最新</option><option value="oldest">最早</option><option value="hot">热度（赞 − 踩）</option>
-                        </select></label>
-                        <label>标签 <select id="detail-review-filter"></select></label>
-                    </div><div id="detail-review-list"></div>` : emptyState('还没有评论', '来写下第一条评价吧。', '💬')}
-                </section>
-            </div>
-        `;
+        if (state.isAdmin) mountDetailStallControls(content, data);
 
         if (comments.length) {
-            const sort = $('#detail-review-sort');
-            const filter = $('#detail-review-filter');
-            const list = $('#detail-review-list');
-            const render = () => {
-                const selected = filter.value;
-                const labels = [...new Set(comments.map(comment => comment.moderation_label).filter(Boolean))];
-                filter.replaceChildren(new Option('全部', 'all'), new Option('无标签', 'untagged'),
-                    ...labels.map(label => new Option(label, 'label:' + label)));
-                if (Array.from(filter.options).some(option => option.value === selected)) filter.value = selected;
-                list.innerHTML = renderDetailReviews(comments, sort.value, filter.value, reviewLabels);
-            };
-            sort.addEventListener('change', render);
-            filter.addEventListener('change', render);
-            list.addEventListener('change', event => {
-                const select = event.target.closest('[data-review-label-id]');
-                if (select) setReviewLabel(comments.find(comment => comment.id === Number(select.dataset.reviewLabelId)), select, render);
-            });
-            render();
+            stallControlUnmounts.push(window.mountStallReviews($('[data-stall-reviews]', content), {
+                comments,
+                render: (sort, filter) => renderDetailReviews(comments, sort, filter, reviewLabels),
+                changeLabel(event) {
+                    const select = event.target.closest('[data-review-label-id]');
+                    if (select) setReviewLabel(comments.find(comment => comment.id === Number(select.dataset.reviewLabelId)), select);
+                }
+            }));
         }
 
         if (history.length) {
@@ -2173,116 +2200,97 @@
             if (sort === 'hot') return heat(b) - heat(a) || newest(a, b);
             return newest(a, b);
         });
-        return comments.length
-            ? comments.map(comment => `
-                <article class="comment-item" data-review-id="${Number(comment.id)}">
-                    ${comment.author_id
-                        ? `<button type="button" class="comment-avatar" data-action="open-public-profile" data-id="${Number(comment.author_id)}" aria-label="查看${escapeHtml(comment.user)}的个人资料">${avatarContent(comment.avatar_url, comment.user)}</button>`
-                        : `<div class="comment-avatar">${avatarContent(null, comment.user)}</div>`}
-                    <div class="comment-main">
-                        <div class="comment-head">
-                            ${comment.author_id
-                                ? `<button type="button" class="link-btn comment-user" data-action="open-public-profile" data-id="${Number(comment.author_id)}">${escapeHtml(comment.user)}</button>`
-                                : `<span class="comment-user">${escapeHtml(comment.user || '匿名用户')}</span>`}
-                            <span class="comment-time">${escapeHtml(formatTime(comment.created_at))}</span>
-                            <span class="stars stars-sm">${starsHtml(comment.score)}</span>
-                            ${comment.moderation_label ? `<span class="badge badge-amber" title="管理员标记">${escapeHtml(comment.moderation_label)}</span>` : ''}
-                        </div>
-                        ${(comment.dish_scores || []).map(dish => `<p class="comment-text">${escapeHtml(dish.name)} · ${escapeHtml(dish.score)} 分</p>`).join('')}
-                        ${comment.dish_name ? `<p class="comment-text"><strong>菜品：</strong>${escapeHtml(comment.dish_name)}</p>` : ''}
-                        <p class="comment-text">${escapeHtml(comment.content || '（无文字评价）')}</p>
-                        ${renderReviewPhotos(comment)}
-                        <div class="comment-actions">
-                            ${Number.isInteger(comment.my_vote) ? `<div class="review-votes" role="group" aria-label="评价投票">
-                                <button type="button" class="btn btn-ghost btn-sm" data-action="review-vote" data-id="${Number(comment.id)}" data-vote="1" aria-pressed="${comment.my_vote === 1}" aria-label="点赞" title="点赞">👍 <span>${formatNumber(comment.likes)}</span></button>
-                                <button type="button" class="btn btn-ghost btn-sm" data-action="review-vote" data-id="${Number(comment.id)}" data-vote="-1" aria-pressed="${comment.my_vote === -1}" aria-label="踩" title="踩">👎 <span>${formatNumber(comment.dislikes)}</span></button>
-                            </div>` : ''}
-                            ${state.isAdmin && reviewLabels ? reviewLabelSelect(comment, reviewLabels) : ''}
-                            ${state.isAdmin ? `<button type="button" class="btn btn-danger btn-sm" data-action="admin-delete-rating" data-id="${Number(comment.id)}">删除评价</button>` : ''}
-                            ${comment.is_mine ? `
-                                <button type="button" class="link-btn" data-action="edit-review" data-id="${Number(comment.id)}">修改</button>
-                                <button type="button" class="link-btn" data-action="withdraw-review" data-id="${Number(comment.id)}">撤回</button>
-                            ` : `<button type="button" class="link-btn" data-action="report" data-id="${Number(comment.id)}">举报</button>`}
-                        </div>
-                    </div>
-                </article>
-            `).join('')
-            : emptyState('没有符合条件的评价', '试试切换标签筛选。', '💬');
+        const {h} = Vue;
+        if (!comments.length) return [emptyState('没有符合条件的评价', '试试切换标签筛选。', '💬')];
+        return comments.map(comment => {
+            const profile = comment.author_id ? {
+                type: 'button', 'data-action': 'open-public-profile', 'data-id': Number(comment.author_id)
+            } : {};
+            const action = (label, name, className = 'link-btn') => h('button', {
+                type: 'button', class: className, 'data-action': name, 'data-id': Number(comment.id)
+            }, label);
+            const vote = (value, label, emoji, count) => h('button', {
+                type: 'button', class: 'btn btn-ghost btn-sm', 'data-action': 'review-vote',
+                'data-id': Number(comment.id), 'data-vote': value, 'aria-pressed': String(comment.my_vote === value),
+                'aria-label': label, title: label
+            }, [emoji + ' ', h('span', formatNumber(count))]);
+            return h('article', {key: comment.id, class: 'comment-item', 'data-review-id': Number(comment.id)}, [
+                h(comment.author_id ? 'button' : 'div', {
+                    ...profile, class: 'comment-avatar',
+                    'aria-label': comment.author_id ? '查看' + comment.user + '的个人资料' : null
+                }, [avatarContent(comment.author_id ? comment.avatar_url : null, comment.user)]),
+                h('div', {class: 'comment-main'}, [
+                    h('div', {class: 'comment-head'}, [
+                        h(comment.author_id ? 'button' : 'span', {
+                            ...profile, class: comment.author_id ? 'link-btn comment-user' : 'comment-user'
+                        }, comment.user || '匿名用户'),
+                        h('span', {class: 'comment-time'}, formatTime(comment.created_at)),
+                        h('span', {class: 'stars stars-sm'}, starNodes(comment.score)),
+                        comment.moderation_label ? h('span', {class: 'badge badge-amber', title: '管理员标记'}, comment.moderation_label) : null
+                    ]),
+                    ...(comment.dish_scores || []).map(dish => h('p', {class: 'comment-text'}, dish.name + ' · ' + dish.score + ' 分')),
+                    comment.dish_name ? h('p', {class: 'comment-text'}, [h('strong', '菜品：'), comment.dish_name]) : null,
+                    h('p', {class: 'comment-text'}, comment.content || '（无文字评价）'),
+                    renderReviewPhotos(comment),
+                    h('div', {class: 'comment-actions'}, [
+                        Number.isInteger(comment.my_vote) ? h('div', {class: 'review-votes', role: 'group', 'aria-label': '评价投票'}, [
+                            vote(1, '点赞', '👍', comment.likes), vote(-1, '踩', '👎', comment.dislikes)
+                        ]) : null,
+                        state.isAdmin && reviewLabels ? reviewLabelSelect(comment, reviewLabels) : null,
+                        state.isAdmin ? action('删除评价', 'admin-delete-rating', 'btn btn-danger btn-sm') : null,
+                        ...(comment.is_mine ? [action('修改', 'edit-review'), action('撤回', 'withdraw-review')] : [action('举报', 'report')])
+                    ])
+                ])
+            ]);
+        });
 
     }
 
     function reviewLabelSelect(review, labels) {
-        return `<select aria-label="评价标签" data-review-label-id="${Number(review.id)}">
-            <option value="">无标签</option>
-            ${labels.map(({name}) => `<option value="${escapeHtml(name)}"${name === review.moderation_label ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('')}
-        </select>`;
+        return Vue.h('select', {
+            'aria-label': '评价标签', 'data-review-label-id': review.id, value: review.moderation_label || ''
+        }, [selectOption('', '无标签'), ...labels.map(({name}) => selectOption(name, name))]);
     }
 
     function renderStallManagement(stall) {
-        const id = Number(stall.id);
-        return `<section class="detail-panel stack">
-            <div class="panel-head"><h3>档口管理</h3></div>
-            <form class="inline-form" data-menu-action="rename-canteen" data-id="${id}">
-                <label>楼层内编号<input name="slot_number" aria-label="楼层内编号" placeholder="如 03、01-02，可留空"
-                    value="${escapeHtml(stall.slot_number ?? splitStallName(stall.name).slot)}" maxlength="20"></label>
-                <label>档口名称<input name="name" aria-label="档口名称" value="${escapeHtml(stall.display_name ?? splitStallName(stall.name).name)}" maxlength="100" required></label>
-                <button type="submit" class="btn btn-primary btn-sm">保存档口信息</button>
-            </form>
-            ${foodCatalog ? `<form class="stack" data-stall-food-types="${id}">
-                <fieldset>
-                    <legend>餐饮分类（可多选）</legend>
-                    <p class="muted" data-food-type-mode>${Object.hasOwn(foodCatalog.overrides, id) ? '当前使用手动分类' : '当前根据档口名自动分类'}</p>
-                    <div class="review-filters">
-                        ${foodTypes().map(type => `<label><input type="checkbox" name="food-type" value="${escapeHtml(type.id)}"${stallFoodTypes(stall).some(item => item.id === type.id) ? ' checked' : ''}> ${escapeHtml(type.name)}</label>`).join('') || '<p class="muted">请先在后台新增餐饮分类。</p>'}
-                    </div>
-                </fieldset>
-                <div class="feedback-review-actions">
-                    <button type="submit" class="btn btn-primary btn-sm">保存分类</button>
-                    <button type="submit" value="auto" class="btn btn-ghost btn-sm">恢复自动分类</button>
-                </div>
-            </form>` : ''}
-            <div><strong>档口照片</strong>${photoControls('canteens', stall)}</div>
-            <div class="panel-head"><h3>菜品管理</h3></div>
-            <form class="inline-form" data-menu-action="add-dish" data-id="${id}">
-                <input name="name" aria-label="新菜品名称" placeholder="输入新菜品名称" maxlength="80" required>
-                <button type="submit" class="btn btn-primary btn-sm">添加菜品</button>
-            </form>
-            ${(stall.dishes || []).map(dish => `<div class="detail-photo-row dish-photo-row">
-                <span data-managed-photo>${photoImage(dish.photo_url, dish.name)}</span>
-                <div>
-                    <form class="inline-form" data-menu-action="rename-dish" data-id="${Number(dish.id)}">
-                        <input name="name" aria-label="菜品名称" value="${escapeHtml(dish.name)}" maxlength="80" required>
-                        <button type="submit" class="btn btn-soft btn-sm">保存菜名</button>
-                    </form>
-                    <p class="muted">${dish.rating_count ? `${escapeHtml(dish.score)} / 5 · ${formatNumber(dish.rating_count)} 人评分` : '暂无菜品评分'}</p>
-                    ${photoControls('dishes', dish)}
-                </div>
-            </div>`).join('') || '<p class="muted">这个档口还没有菜品。</p>'}
-        </section>`;
+        const {h} = Vue;
+        return h('section', {class: 'detail-panel stack'}, [
+            h('div', {class: 'panel-head'}, [h('h3', '档口管理')]),
+            h('div', {'data-menu-editor': 'rename-canteen', 'data-id': stall.id}),
+            foodCatalog ? h('div', {'data-stall-category-editor': ''}) : null,
+            h('div', [h('strong', '档口照片'), photoControls('canteens', stall)]),
+            h('div', {class: 'panel-head'}, [h('h3', '菜品管理')]),
+            h('div', {'data-add-dish-editor': ''}),
+            h('div', {class: 'stack', 'data-managed-dishes': ''}, stall.dishes?.length
+                ? stall.dishes.map(renderManagedDish) : [h('p', {class: 'muted', 'data-empty-dishes': ''}, '这个档口还没有菜品。')])
+        ]);
     }
 
-    async function saveMenuChange(event) {
-        const form = event.target.closest('form[data-menu-action]');
+    function renderManagedDish(dish) {
+        const {h} = Vue;
+        return h('div', {key: dish.id, class: 'detail-photo-row dish-photo-row', 'data-managed-dish': dish.id}, [
+            h('span', {'data-managed-photo': ''}, [photoNode(dish.photo_url, dish.name)]),
+            h('div', [
+                h('div', {'data-menu-editor': 'rename-dish', 'data-id': dish.id}),
+                h('p', {class: 'muted'}, dish.rating_count ? dish.score + ' / 5 · ' +
+                    formatNumber(dish.rating_count) + ' 人评分' : '暂无菜品评分'),
+                photoControls('dishes', dish)
+            ])
+        ]);
+    }
+
+    async function saveCategoryName(event) {
+        const form = event.target.closest('form[data-menu-action="rename-category"]');
         if (!form) return;
         event.preventDefault();
-        const detailId = state.detailId;
-        const { menuAction, id } = form.dataset;
-        const add = menuAction === 'add-dish';
-        const group = menuAction === 'rename-category' ? 'categories' : menuAction === 'rename-dish' ? 'dishes' : 'canteens';
-        const path = `/api/admin/${group}/${id}${add ? '/dishes' : ''}`;
-        const button = form.querySelector('button[type="submit"]');
+        const button = $('button[type="submit"]', form);
         setBusy(button, true);
         try {
-            const fields = {name: form.elements.namedItem('name').value.trim()};
-            if (menuAction === 'rename-canteen') fields.slot_number = form.elements.namedItem('slot_number').value.trim();
-            await api(path, { method: add ? 'POST' : 'PATCH', body: fields });
-            toast(add ? '菜品已添加' : '名称已保存');
-            if (detailId && state.detailId === detailId) await openDetail(detailId);
-            if (group === 'categories') {
-                await refreshAll();
-            } else if (menuAction === 'rename-canteen') {
-                await Promise.all([loadAdminAll(), loadCanteens(), loadRanking()]);
-            }
+            await api(`/api/admin/categories/${form.dataset.id}`, {
+                method: 'PATCH', body: {name: form.elements.namedItem('name').value.trim()}
+            });
+            toast('名称已保存');
+            await refreshAll();
         } catch (error) {
             toast(error.message, 'error');
         } finally {
@@ -2290,12 +2298,12 @@
         }
     }
 
-    function photoImage(url, alt, className = 'detail-photo') {
-        if (!url) return '';
-        const image = `<img class="${className}" src="${escapeHtml((window.CANTEEN_API_ORIGIN || '') + url)}" alt="${escapeHtml(alt)}" loading="lazy">`;
-        return className === 'detail-photo'
-            ? `<button type="button" class="photo-open" data-photo-open aria-label="查看${escapeHtml(alt)}大图">${image}</button>`
-            : image;
+    function photoNode(url, alt, className = 'detail-photo') {
+        if (!url) return null;
+        const {h} = Vue;
+        const image = h('img', {class: className, src: (window.CANTEEN_API_ORIGIN || '') + url, alt, loading: 'lazy'});
+        return className === 'detail-photo' ? h('button', {type: 'button', class: 'photo-open',
+            'data-photo-open': '', 'aria-label': '查看' + alt + '大图'}, [image]) : image;
     }
 
     function reviewPhotoUrls(review) {
@@ -2303,20 +2311,21 @@
     }
 
     function renderReviewPhotos(review) {
+        const {h} = Vue;
         const photos = reviewPhotoUrls(review);
-        if (!photos.length) return '';
-        return `<div class="review-photo-gallery">${photos.map((url, index) => {
+        if (!photos.length) return null;
+        return h('div', {class: 'review-photo-gallery'}, photos.map((url, index) => {
             const match = /^\/api\/(?:review-photos\/(\d+)|photos\/ratings\/\d+)$/.exec(url);
             const key = match ? match[1] || 'legacy' : '';
             const fullUrl = (window.CANTEEN_API_ORIGIN || '') + url;
-            return `<div class="review-photo-tile">
-                <a href="${escapeHtml(fullUrl)}" target="_blank" rel="noopener" aria-label="查看评价照片 ${index + 1} 的大图">
-                    ${photoImage(url, `评价照片 ${index + 1}`, 'review-photo')}
-                </a>
-                ${review.is_mine && key ? `<button type="button" class="review-photo-delete" data-action="delete-review-photo"
-                    data-id="${Number(review.id)}" data-photo-key="${key}" aria-label="删除第 ${index + 1} 张照片">×</button>` : ''}
-            </div>`;
-        }).join('')}</div>`;
+            return h('div', {key: url, class: 'review-photo-tile'}, [
+                h('a', {href: fullUrl, target: '_blank', rel: 'noopener', 'aria-label': `查看评价照片 ${index + 1} 的大图`},
+                    [photoNode(url, `评价照片 ${index + 1}`, 'review-photo')]),
+                review.is_mine && key ? actionButton('×', 'delete-review-photo', 'review-photo-delete', {
+                    'data-id': review.id, 'data-photo-key': key, 'aria-label': `删除第 ${index + 1} 张照片`
+                }) : null
+            ]);
+        }));
     }
 
     async function deleteReviewPhoto(id, button) {
@@ -2359,74 +2368,116 @@
         }
     }
 
-    function photoControls(kind, item) {
-        if (!state.isAdmin) return '';
-        return `<div class="photo-controls">
-            <label class="photo-picker">
-                <span class="btn btn-ghost btn-sm" data-photo-label>${item.photo_url ? '更换照片' : '添加照片'}</span>
-                <input type="file" aria-label="选择照片" accept="image/jpeg,image/png,image/webp" data-photo-kind="${kind}" data-id="${Number(item.id)}">
-            </label>
-            <span class="photo-filename muted" aria-live="polite">${item.photo_url ? '已有照片' : '未选择文件'}</span>
-            <button type="button" class="btn btn-soft btn-sm" data-action="remove-photo" data-photo-kind="${kind}" data-id="${Number(item.id)}"${item.photo_url ? '' : ' hidden'}>移除照片</button>
-        </div>`;
+    const stallControlUnmounts = [];
+
+    function unmountStallControls() {
+        stallControlUnmounts.splice(0).reverse().forEach(unmount => unmount());
     }
 
-    async function updateDisplayPhoto(control, photo = null) {
-        const { photoKind, id } = control.dataset;
-        const controls = control.closest('.photo-controls');
-        const picker = $('input', controls);
-        const remove = $('[data-action="remove-photo"]', controls);
-        const filename = $('.photo-filename', controls);
-        const previousName = filename.textContent;
-        const isStall = photoKind === 'canteens';
-        const item = isStall ? state.detailData : state.detailData?.dishes.find(dish => String(dish.id) === id);
-        const preview = isStall ? $('#detail-content .detail-hero [data-managed-photo]') :
-            $('[data-managed-photo]', controls.closest('.dish-photo-row'));
-        const body = photo ? new FormData() : undefined;
-        picker.disabled = remove.disabled = true;
-        if (photo) filename.textContent = photo.name;
-        try {
-            if (photo) body.append('photo', await preparePhoto(photo));
-            const result = await api(`/api/admin/photos/${photoKind}/${id}`, { method: photo ? 'PUT' : 'DELETE', body });
-            const url = result.photo_url ? result.photo_url + '?v=' + Date.now() : null;
-            if (item) item.photo_url = url;
-            if (controls.isConnected) {
-                preview.innerHTML = photoImage(url, item?.name || '照片');
-                remove.hidden = !url;
-                $('[data-photo-label]', controls).textContent = url ? '更换照片' : '添加照片';
-                if (!url) filename.textContent = '未选择文件';
-            }
+    function photoControls(kind, item) {
+        return Vue.h('div', {'data-photo-editor': kind, 'data-id': item.id});
+    }
+
+    function mountDetailStallControls(content, stall) {
+        $$('[data-menu-editor]', content).forEach(target => {
+            const action = target.dataset.menuEditor;
+            const id = Number(target.dataset.id);
+            const isStall = action === 'rename-canteen';
+            const item = isStall ? stall : stall.dishes.find(dish => Number(dish.id) === id);
+            const fields = [{name: 'name', label: isStall ? '档口名称' : '菜品名称', max: isStall ? 100 : 80}];
+            const values = {name: item.name};
             if (isStall) {
-                const stall = state.canteens.find(row => String(row.id) === id);
-                if (stall) stall.photo_url = url;
-                clearRandomFoodResult();
-                renderCanteenGrid();
-                renderCampusFood();
+                const legacy = splitStallName(item.name);
+                values.name = item.display_name ?? legacy.name;
+                values.slot_number = item.slot_number ?? legacy.slot;
+                fields.unshift({name: 'slot_number', label: '楼层内编号', max: 20, placeholder: '如 03、01-02，可留空'});
             }
-            toast(photo ? '照片已保存' : '照片已移除');
-        } catch (error) {
-            filename.textContent = previousName;
-            toast(error.message, 'error');
-        } finally {
-            picker.disabled = remove.disabled = false;
-            picker.value = '';
+            stallControlUnmounts.push(window.mountMenuForm(target, {
+                action, id, fields, values, label: isStall ? '保存档口信息' : '保存菜名',
+                reportError: error => toast(error.message, 'error'),
+                async save(data) {
+                    const resource = isStall ? 'canteens' : 'dishes';
+                    await api(`/api/admin/${resource}/${id}`, {method: 'PATCH', body: data});
+                    const name = isStall ? data.slot_number + data.name : data.name;
+                    item.name = name;
+                    if (isStall) Object.assign(item, {display_name: data.name, slot_number: data.slot_number});
+                    toast('名称已保存');
+                    if (isStall) await Promise.allSettled([loadAdminAll(), loadCanteens(), loadRanking()]);
+                }
+            }));
+        });
+        const addDishEditor = $('[data-add-dish-editor]', content);
+        if (addDishEditor) {
+            stallControlUnmounts.push(window.mountMenuForm(addDishEditor, {
+                action: 'add-dish', id: stall.id, fields: [{name: 'name', label: '新菜品名称',
+                    placeholder: '输入新菜品名称', max: 80}],
+                values: {name: ''}, clear: true, label: '添加菜品',
+                reportError: error => toast(error.message, 'error'),
+                async save(data) {
+                    const created = await api(`/api/admin/canteens/${stall.id}/dishes`, {method: 'POST', body: data});
+                    if (!addDishEditor.isConnected) return;
+                    const dish = {id: created.id, name: created.name, rating_count: 0};
+                    stall.dishes.push(dish);
+                    await Vue.nextTick();
+                    const row = $(`[data-managed-dish="${Number(dish.id)}"]`, content);
+                    if (addDishEditor.isConnected && row) mountDetailStallControls(row, stall);
+                    toast('菜品已添加');
+                }
+            }));
         }
+        const categoryEditor = $('[data-stall-category-editor]', content);
+        if (categoryEditor) {
+            const current = () => ({
+                selected: stallFoodTypes(stall).map(type => type.id),
+                manual: Object.hasOwn(foodCatalog.overrides, stall.id)
+            });
+            stallControlUnmounts.push(window.mountStallCategoryControls(categoryEditor, {
+                id: stall.id,
+                types: foodTypes(),
+                ...current(),
+                async save(types) {
+                    await api(`/api/admin/canteens/${stall.id}/food-types`, {method: 'PUT', body: {types}});
+                    await loadFoodTypes();
+                    toast('餐饮分类已更新');
+                    return current();
+                },
+                reportError: error => toast(error.message, 'error')
+            }));
+        }
+        $$('[data-photo-editor]', content).forEach(target => {
+            const kind = target.dataset.photoEditor;
+            const isStall = kind === 'canteens';
+            const id = Number(target.dataset.id);
+            const item = isStall ? stall : stall.dishes.find(dish => Number(dish.id) === id);
+
+            stallControlUnmounts.push(window.mountStallPhotoControls(target, {
+                hasPhoto: Boolean(item.photo_url),
+                reportError: error => toast(error.message, 'error'),
+                async savePhoto(photo) {
+                    const body = photo ? new FormData() : undefined;
+                    if (photo) body.append('photo', await preparePhoto(photo));
+                    const result = await api(`/api/admin/photos/${kind}/${id}`, {
+                        method: photo ? 'PUT' : 'DELETE', body
+                    });
+                    const url = result.photo_url ? result.photo_url + '?v=' + Date.now() : null;
+                    item.photo_url = url;
+                    if (isStall) {
+                        const row = state.canteens.find(entry => Number(entry.id) === id);
+                        if (row) row.photo_url = url;
+                        clearRandomFoodResult();
+                        renderCanteenGrid();
+                        renderCampusFood();
+                    }
+                    toast(photo ? '照片已保存' : '照片已移除');
+                    return url;
+                }
+            }));
+        });
     }
 
     function renderHistoryChart(history) {
         const canvas = $('#history-chart');
-        if (!canvas) return;
-
-        if (typeof Chart === 'undefined') {
-            const lines = history.map(item => {
-                const avg = item.avg_score === null || item.avg_score === undefined
-                    ? '暂无评分'
-                    : `${formatScore(item.avg_score)} 分`;
-                return `${escapeHtml(formatTime(item.date))}（${escapeHtml(avg)} / ${formatNumber(item.rating_count)} 条）`;
-            });
-            canvas.parentElement.innerHTML = `<p class="muted" style="font-size:12.5px;line-height:2">${lines.join('<br>')}</p>`;
-            return;
-        }
+        if (!canvas || typeof Chart === 'undefined') return;
 
         destroyChart();
         const labels = history.map(item => formatTime(item.date));
@@ -2497,7 +2548,7 @@
         $('#rating-canteen-label').textContent = campus ? '美食店铺' : '档口';
 
         const detail = review ? reviewDetail : null;
-        if (id && $('#detail-modal').classList.contains('is-open')) {
+        if (id && isModalOpen($('#detail-modal'))) {
             state.reopenDetailId = id;
             closeModal($('#detail-modal'));
         } else {
@@ -2513,19 +2564,16 @@
         $('#rating-location-fields').hidden = Boolean(id);
         const targetSummary = $('#rating-target-summary');
         targetSummary.hidden = !id;
-        targetSummary.replaceChildren();
-        if (id) {
-            const name = document.createElement('strong');
-            name.textContent = selected?.name || reviewDetail?.name || '当前档口';
-            const location = document.createElement('span');
-            location.textContent = getCategories().find(item => item.id === categoryId)?.name || reviewDetail?.category_name || '';
-            targetSummary.append(name, location);
-        }
+        const {h, render, Fragment} = Vue;
+        render(id ? h(Fragment, [
+            h('strong', selected?.name || reviewDetail?.name || '当前档口'),
+            h('span', getCategories().find(item => item.id === categoryId)?.name || reviewDetail?.category_name || '')
+        ]) : null, targetSummary);
         $('#rating-dishes-extra').open = Boolean(review?.dish_scores?.length);
         $('#rating-photos-extra').open = Boolean(reviewPhotoUrls(review).length);
         if (review) {
-            category.replaceChildren(new Option(detail.category_name || '未分类', detail.category_id));
-            canteen.replaceChildren(new Option(detail.name, id));
+            render(selectOption(detail.category_id, detail.category_name || '未分类'), category);
+            render(selectOption(id, detail.name), canteen);
             loadRatingDishes(detail.dishes);
             for (const dish of review.dish_scores || []) {
                 const option = Array.from($('#rating-dish').options).find(item => Number(item.value) === dish.id);
@@ -2550,26 +2598,29 @@
     }
 
     async function openMyReviews() {
+        const {h, render, Fragment} = Vue;
         const modal = $('#my-reviews-modal');
         const list = $('#my-reviews-list');
-        list.textContent = '正在加载评价…';
+        render(Vue.createTextVNode('正在加载评价…'), list);
         $('#my-social-actions').hidden = !state.token;
         selectMySection('my-reviews');
         openModal(modal);
         try {
             const reviews = await api('/api/my/ratings');
-            list.innerHTML = reviews.length ? reviews.map(review => `
-                <article class="detail-panel">
-                    <strong>${escapeHtml(review.canteen_name)}</strong>
-                    <p class="muted">${escapeHtml(review.category_name || '未分类')} · ${escapeHtml(formatTime(review.created_at))} · ${escapeHtml(review.score)} 分</p>
-                    <p class="comment-text">${escapeHtml(review.content || '（无文字评价）')}</p>
-                    <div class="comment-actions">
-                        <button type="button" class="link-btn" data-action="edit-my-review" data-id="${Number(review.id)}" data-canteen-id="${Number(review.canteen_id)}">修改</button>
-                        <button type="button" class="link-btn" data-action="withdraw-review" data-id="${Number(review.id)}">撤回</button>
-                    </div>
-                </article>`).join('') : '<p class="muted">你还没有发布评价。</p>';
+            render(reviews.length ? h(Fragment, reviews.map(review => h('article', {key: review.id, class: 'detail-panel'}, [
+                h('strong', review.canteen_name),
+                h('p', {class: 'muted'}, (review.category_name || '未分类') + ' · ' +
+                    formatTime(review.created_at) + ' · ' + review.score + ' 分'),
+                h('p', {class: 'comment-text'}, review.content || '（无文字评价）'),
+                h('div', {class: 'comment-actions'}, [
+                    h('button', {type: 'button', class: 'link-btn', 'data-action': 'edit-my-review',
+                        'data-id': review.id, 'data-canteen-id': review.canteen_id}, '修改'),
+                    h('button', {type: 'button', class: 'link-btn', 'data-action': 'withdraw-review',
+                        'data-id': review.id}, '撤回')
+                ])
+            ]))) : h('p', {class: 'muted'}, '你还没有发布评价。'), list);
         } catch (error) {
-            list.textContent = error.message;
+            render(Vue.createTextVNode(error.message), list);
         }
     }
 
@@ -2581,7 +2632,7 @@
             const review = detail.comments.find(item => item.id === id && item.is_mine);
             if (!review) throw new Error('这条评价已不可修改');
             const modal = $('#my-reviews-modal');
-            if (!modal.classList.contains('is-open')) return;
+            if (!isModalOpen(modal)) return;
             closeModal(modal);
             openRating(canteenId, review, detail);
             state.returnToMyReviews = true;
@@ -2601,7 +2652,7 @@
             await api(`/api/ratings/${id}`, { method: 'DELETE' });
             toast('评价已撤回');
             await Promise.all([loadCanteens(), loadRanking()]);
-            if (fromMyReviews && $('#my-reviews-modal').classList.contains('is-open')) {
+            if (fromMyReviews && isModalOpen($('#my-reviews-modal'))) {
                 openMyReviews();
             } else if (detailId && state.detailId === detailId) {
                 openDetail(detailId);
@@ -2613,16 +2664,26 @@
         }
     }
 
+    function renderSelectOptions(select, placeholder, options = []) {
+        const {h, render, Fragment} = Vue;
+        render(h(Fragment, [h('option', {value: ''}, placeholder), ...options]), select);
+        select.value = '';
+    }
+
+    function selectOption(value, label) {
+        return Vue.h('option', {key: value, value}, label);
+    }
+
     function fillRatingCategories(selectedCanteenId = null) {
         const select = $('#rating-category');
         if (!select) return;
 
         const campus = state.ratingScope === 'campus';
         const categories = getCategories().filter(category => (category.kind === 'campus') === campus);
-        select.innerHTML = campus
-            ? '<option value="">请选择校内地点</option>' + categories.map(category => `<option value="${category.id}">${escapeHtml(category.name)}</option>`).join('')
-            : '<option value="">请选择食堂和楼层</option>' + diningGroups().map(group => `<optgroup label="${escapeHtml(group.name)}">${group.floors.map(floor =>
-                `<option value="${floor.id}">${escapeHtml(group.name + ' · ' + floor.label)}</option>`).join('')}</optgroup>`).join('');
+        renderSelectOptions(select, campus ? '请选择校内地点' : '请选择食堂和楼层',
+            campus ? categories.map(category => selectOption(category.id, category.name)) :
+                diningGroups().map(group => Vue.h('optgroup', {key: group.name, label: group.name},
+                    group.floors.map(floor => selectOption(floor.id, group.name + ' · ' + floor.label)))));
 
         const selected = selectedCanteenId
             ? state.canteens.find(canteen => Number(canteen.id) === Number(selectedCanteenId))
@@ -2643,21 +2704,20 @@
         const campus = state.ratingScope === 'campus';
 
         if (!categoryId) {
-            select.innerHTML = campus ? '<option value="">请先选择校内地点</option>' : '<option value="">请先选择食堂</option>';
+            renderSelectOptions(select, campus ? '请先选择校内地点' : '请先选择食堂');
             loadRatingDishes();
             return;
         }
 
         const list = state.canteens.filter(canteen => String(canteen.category_id) === String(categoryId));
         if (!list.length) {
-            select.innerHTML = campus ? '<option value="">该地点暂无美食</option>' : '<option value="">该食堂暂无档口</option>';
+            renderSelectOptions(select, campus ? '该地点暂无美食' : '该食堂暂无档口');
             loadRatingDishes();
             return;
         }
 
-        select.innerHTML = (campus ? '<option value="">请选择美食店铺</option>' : '<option value="">请选择档口</option>') + list
-            .map(canteen => `<option value="${canteen.id}">${escapeHtml(canteen.name)}</option>`)
-            .join('');
+        renderSelectOptions(select, campus ? '请选择美食店铺' : '请选择档口',
+            list.map(canteen => selectOption(canteen.id, canteen.name)));
 
         if (selectedCanteenId) {
             select.value = String(selectedCanteenId);
@@ -2674,42 +2734,42 @@
         if (option?.value) addRatingDish(option);
     }
 
+    let ratingDishRows = [];
+    let ratingDishRowId = 0;
+
+    function renderRatingDishRows() {
+        const {h, render, Fragment} = Vue;
+        render(h(Fragment, ratingDishRows.map(row => {
+            const scores = [5, 4, 3, 2, 1];
+            if (row.currentScore !== null && !scores.includes(row.currentScore)) scores.push(row.currentScore);
+            return h('div', {key: row.key, class: 'field-row', 'data-dish-id': row.option?.value || ''}, [
+                h('label', {class: 'field'}, [
+                    h('span', row.option?.textContent || '新菜品名称'),
+                    row.option ? null : h('input', {class: 'dish-name-input', maxlength: 80, required: true}),
+                    h('select', {class: 'dish-score-input', 'aria-label': '菜品评分', required: true}, [
+                        h('option', {value: ''}, '请选择菜品评分'),
+                        ...scores.map(score => h('option', {key: score, value: score, selected: row.currentScore === score}, score + ' 分'))
+                    ])
+                ]),
+                h('div', [h('button', {type: 'button', class: 'btn btn-ghost btn-sm', onClick: () => {
+                    if (row.option) row.option.disabled = false;
+                    ratingDishRows = ratingDishRows.filter(item => item !== row);
+                    renderRatingDishRows();
+                }}, '移除')])
+            ]);
+        })), $('#rating-dish-scores'));
+    }
+
     function addRatingDish(option = null, currentScore = null) {
-        const list = $('#rating-dish-scores');
-        if (list.children.length >= 20) {
+        if (ratingDishRows.length >= 20) {
             showError($('#rating-error'), '每条评价最多可选 20 道菜');
             return;
         }
         clearError($('#rating-error'));
-        const adding = !option;
-        const row = document.createElement('div');
-        row.className = 'field-row';
-        row.dataset.dishId = adding ? '' : option.value;
-        row.innerHTML = `
-            <label class="field">
-                <span>${adding ? '新菜品名称' : escapeHtml(option.textContent)}</span>
-                ${adding ? '<input class="dish-name-input" maxlength="80" required>' : ''}
-                <select class="dish-score-input" aria-label="菜品评分" required>
-                    <option value="">请选择菜品评分</option>
-                    ${[5, 4, 3, 2, 1].map(score => `<option value="${score}">${score} 分</option>`).join('')}
-                </select>
-            </label>
-            <div><button type="button" class="btn btn-ghost btn-sm">移除</button></div>`;
-        if (!adding) option.disabled = true;
-        row.querySelector('button').addEventListener('click', () => {
-            if (option) option.disabled = false;
-            row.remove();
-        });
-        list.append(row);
-        const scoreInput = row.querySelector('.dish-score-input');
-        if (currentScore !== null) {
-            if (![1, 2, 3, 4, 5].includes(currentScore)) {
-                scoreInput.add(new Option(`${currentScore} 分`, currentScore));
-            }
-            scoreInput.value = String(currentScore);
-        } else {
-            row.querySelector('input, select').focus();
-        }
+        if (option) option.disabled = true;
+        ratingDishRows.push({key: ++ratingDishRowId, option, currentScore});
+        renderRatingDishRows();
+        if (currentScore === null) $('#rating-dish-scores').lastElementChild.querySelector('input, select').focus();
     }
 
     async function loadRatingDishes(knownDishes = null) {
@@ -2718,19 +2778,19 @@
         const select = $('#rating-dish');
         $('#rating-add-new-dish').disabled = !canteenId;
         select.disabled = true;
-        select.replaceChildren(new Option(canteenId ? '正在加载菜品…' : '请先选择档口', ''));
-        $("#rating-dish-scores").replaceChildren();
+        renderSelectOptions(select, canteenId ? '正在加载菜品…' : '请先选择档口');
+        ratingDishRows = [];
+        renderRatingDishRows();
         if (!canteenId) return;
 
         try {
             const dishes = knownDishes || await api(`/api/canteens/${canteenId}/dishes`);
             if (requestId !== ratingDishRequest) return;
-            select.replaceChildren(new Option('请选择菜品（可选）', ''));
-            dishes.forEach(dish => select.add(new Option(dish.name, dish.id)));
+            renderSelectOptions(select, '请选择菜品（可选）', dishes.map(dish => selectOption(dish.id, dish.name)));
             select.disabled = false;
         } catch {
             if (requestId !== ratingDishRequest) return;
-            select.replaceChildren(new Option('菜品加载失败，请重新选择档口', ''));
+            renderSelectOptions(select, '菜品加载失败，请重新选择档口');
         }
     }
 
@@ -2753,7 +2813,7 @@
     function clearRatingPhotoPreviews() {
         ratingPhotoPreviewUrls.forEach(url => URL.revokeObjectURL(url));
         ratingPhotoPreviewUrls = [];
-        $('#rating-photo-preview').replaceChildren();
+        Vue.render(null, $('#rating-photo-preview'));
     }
 
     function ratingPhotoCount() {
@@ -2761,6 +2821,7 @@
     }
 
     function updateRatingPhotoPicker() {
+        const {h, render, Fragment} = Vue;
         const count = ratingPhotoCount();
         $('#rating-photo-hint').textContent = count
             ? `共 ${count}/4 张，新增 ${ratingPhotos.length} 张`
@@ -2768,14 +2829,12 @@
         $('#rating-photo-clear').hidden = !ratingPhotos.length;
         clearRatingPhotoPreviews();
         ratingPhotoPreviewUrls = ratingPhotos.map(photo => URL.createObjectURL(photo));
-        $('#rating-photo-preview').innerHTML = ratingPhotoPreviewUrls.map((url, index) => `
-            <div class="review-photo-tile">
-                <a href="${url}" target="_blank" rel="noopener" aria-label="查看第 ${index + 1} 张待上传照片">
-                    <img class="review-photo" src="${url}" alt="待上传照片 ${index + 1}">
-                </a>
-                <button type="button" class="review-photo-delete" data-photo-index="${index}" aria-label="移除第 ${index + 1} 张待上传照片">×</button>
-            </div>
-        `).join('');
+        render(h(Fragment, ratingPhotoPreviewUrls.map((url, index) => h('div', {key: url, class: 'review-photo-tile'}, [
+            h('a', {href: url, target: '_blank', rel: 'noopener', 'aria-label': `查看第 ${index + 1} 张待上传照片`},
+                [h('img', {class: 'review-photo', src: url, alt: `待上传照片 ${index + 1}`})]),
+            h('button', {type: 'button', class: 'review-photo-delete', 'data-photo-index': index,
+                'aria-label': `移除第 ${index + 1} 张待上传照片`}, '×')
+        ]))), $('#rating-photo-preview'));
     }
 
     async function submitRating(event) {
@@ -2853,15 +2912,30 @@
 
     function openReport(commentId) {
         if (!commentId) return;
-        $('#report-form').reset();
-        $('#report-comment-id').value = String(commentId);
-        clearError($('#report-error'));
-        openModal($('#report-modal'));
+        const {h, render, Fragment} = Vue;
+        const modal = $('#report-modal');
+        render(h(Fragment, [
+            h('button', {type: 'button', class: 'icon-btn modal-close', 'data-close-modal': '', 'aria-label': '关闭'}, '×'),
+            h('div', {class: 'modal-head'}, [
+                h('span', {class: 'modal-icon'}, '!'),
+                h('h2', {id: 'report-title'}, '举报这条评价'),
+                h('p', '请说明举报理由，管理员会尽快处理。')
+            ]),
+            h('form', {id: 'report-form', class: 'stack', onSubmit: event => submitReport(event, commentId)}, [
+                h('label', {class: 'field'}, [
+                    h('span', '举报理由'),
+                    h('textarea', {id: 'report-reason', rows: 4, maxlength: 200, required: true,
+                        placeholder: '例如：不文明用语、恶意攻击、广告…'})
+                ]),
+                h('p', {class: 'form-error', id: 'report-error', hidden: true}),
+                h('button', {type: 'submit', class: 'btn btn-primary btn-block'}, '提交举报')
+            ])
+        ]), $('#report-content'));
+        openModal(modal);
     }
 
-    async function submitReport(event) {
+    async function submitReport(event, commentId) {
         event.preventDefault();
-        const commentId = Number($('#report-comment-id').value);
         const reason = $('#report-reason').value.trim();
         const errorElement = $('#report-error');
         const button = event.target.querySelector('button[type="submit"]');
@@ -2923,7 +2997,7 @@
             }
             toast(error.message || '管理数据加载失败', 'error');
             const list = adminListForTab(state.adminTab);
-            if (list) list.innerHTML = adminEmpty('加载失败，请稍后重试');
+            if (list) renderAdminPlaceholder(list, '加载失败，请稍后重试');
         }
     }
 
@@ -2931,8 +3005,12 @@
         ['admin-category-list', 'admin-canteen-list', 'admin-rating-list', 'admin-report-list', 'admin-action-list']
             .forEach(id => {
                 const element = document.getElementById(id);
-                if (element) element.innerHTML = adminEmpty('加载中…');
+                if (element) renderAdminPlaceholder(element, '加载中…');
             });
+    }
+
+    function renderAdminPlaceholder(target, message) {
+        Vue.render(Vue.h('div', {class: 'admin-empty'}, message), target);
     }
 
     function adminListForTab(tab) {
@@ -2947,17 +3025,18 @@
     }
 
     function renderAdminStats() {
+        const {h, render, Fragment} = Vue;
         const stats = $('#admin-stats');
         if (!stats || !state.admin) return;
 
         const activeRatings = state.admin.ratings.filter(rating => !rating.is_deleted).length;
         const activeCanteens = state.admin.canteens.filter(canteen => canteen.is_active !== false).length;
-        stats.innerHTML = `
-            <div class="stat-card"><strong>${formatNumber(state.admin.categories.length)}</strong><span>食堂</span></div>
-            <div class="stat-card"><strong>${formatNumber(activeCanteens)}</strong><span>在售档口</span></div>
-            <div class="stat-card"><strong>${formatNumber(activeRatings)}</strong><span>有效评价</span></div>
-            <div class="stat-card is-accent"><strong>${formatNumber(state.admin.reports.length)}</strong><span>待处理举报</span></div>
-        `;
+        render(h(Fragment, [
+            ['食堂', state.admin.categories.length], ['在售档口', activeCanteens],
+            ['有效评价', activeRatings], ['待处理举报', state.admin.reports.length, true]
+        ].map(([label, count, accent]) => h('div', {key: label, class: ['stat-card', {'is-accent': accent}]}, [
+            h('strong', formatNumber(count)), h('span', label)
+        ]))), stats);
     }
 
     function switchAdminTab(tab) {
@@ -2999,34 +3078,46 @@
         }
     }
 
+    let adminUsersRequest = 0;
+
     async function loadAdministratorAccounts() {
+        const {h, render, Fragment} = Vue;
+        const request = ++adminUsersRequest;
         const list = $('#admin-accounts-list');
         const search = $('#admin-user-search').elements.q.value.trim();
-        list.textContent = '正在加载…';
+        renderAdminPlaceholder(list, '正在加载…');
         try {
             const accounts = await api('/api/admin/users?q=' + encodeURIComponent(search));
-            list.innerHTML = accounts.map(account => `
-                <div class="admin-row">
-                    <div class="admin-row-main">
-                        <strong>${escapeHtml(account.username)}</strong>
-                        <p>${escapeHtml(account.nickname || '未设置昵称')}</p>
-                        <p>${account.is_admin ? '管理员' : '普通用户'} · ${account.is_banned ? '已封禁' : '可登录'} · ${account.is_muted ? '已禁言' : '可发言'}</p>
-                    </div>
-                    <div class="admin-row-actions">
-                        <button type="button" class="btn btn-ghost btn-sm" data-action="open-public-profile"
-                            data-id="${Number(account.id)}" aria-label="查看 ${escapeHtml(account.username)} 的主页">查看主页</button>
-                        ${account.username === 'admin' ? '<span class="muted">主管理员</span>' : [
-                            ['is_admin', account.is_admin ? '撤销管理权限' : '设为管理员'],
-                            ['is_banned', account.is_banned ? '解除封禁' : '封禁'],
-                            ['is_muted', account.is_muted ? '解除禁言' : '禁言']
-                        ].filter(([field]) => field !== 'is_admin' || state.username === 'admin').map(([field, label]) => `<button type="button" class="btn btn-ghost btn-sm"
-                            data-action="moderate-user" data-id="${Number(account.id)}" data-field="${field}"
-                            data-enabled="${!account[field]}" data-account="${escapeHtml(account.username)}"
-                            ${field === 'is_admin' && account.is_banned && !account.is_admin ? 'disabled' : ''}>${label}</button>`).join('')}
-                    </div>
-                </div>`).join('') || adminEmpty('没有找到匹配的用户。');
+            if (request !== adminUsersRequest) return;
+            if (!accounts.length) {
+                renderAdminPlaceholder(list, '没有找到匹配的用户。');
+                return;
+            }
+            render(h(Fragment, accounts.map(account => h('div', {key: account.id, class: 'admin-row'}, [
+                h('div', {class: 'admin-row-main'}, [
+                    h('strong', account.username),
+                    h('p', account.nickname || '未设置昵称'),
+                    h('p', [(account.is_admin ? '管理员' : '普通用户'),
+                        (account.is_banned ? '已封禁' : '可登录'), (account.is_muted ? '已禁言' : '可发言')].join(' · '))
+                ]),
+                h('div', {class: 'admin-row-actions'}, [
+                    actionButton('查看主页', 'open-public-profile', 'btn btn-ghost btn-sm', {
+                        'data-id': account.id, 'aria-label': '查看 ' + account.username + ' 的主页'
+                    }),
+                    ...(account.username === 'admin' ? [h('span', {class: 'muted'}, '主管理员')] : [
+                        ['is_admin', account.is_admin ? '撤销管理权限' : '设为管理员'],
+                        ['is_banned', account.is_banned ? '解除封禁' : '封禁'],
+                        ['is_muted', account.is_muted ? '解除禁言' : '禁言']
+                    ].filter(([field]) => field !== 'is_admin' || state.username === 'admin').map(([field, label]) =>
+                        actionButton(label, 'moderate-user', 'btn btn-ghost btn-sm', {
+                            key: field, 'data-id': account.id, 'data-field': field,
+                            'data-enabled': String(!account[field]), 'data-account': account.username,
+                            disabled: field === 'is_admin' && account.is_banned && !account.is_admin
+                        })))
+                ])
+            ]))), list);
         } catch (error) {
-            list.textContent = error.message;
+            if (request === adminUsersRequest) renderAdminPlaceholder(list, error.message);
         }
     }
 
@@ -3057,9 +3148,10 @@
         $('#feedback-building-field').hidden = !stall;
         $('#feedback-location-label').textContent = campus ? '所在楼宇与楼层' : '所在位置';
         form.elements.building.required = stall;
-        form.elements.building.replaceChildren(new Option(campus ? '请选择楼宇和楼层' : '请选择食堂或其他位置', ''), ...getCategories()
-            .filter(category => (category.kind === 'campus') === campus).map(category => new Option(category.name, category.id)));
-        if (kind === 'stall') form.elements.building.add(new Option('其他（手动填写）', 'other'));
+        const locations = getCategories().filter(category => (category.kind === 'campus') === campus)
+            .map(category => selectOption(category.id, category.name));
+        if (kind === 'stall') locations.push(selectOption('other', '其他（手动填写）'));
+        renderSelectOptions(form.elements.building, campus ? '请选择楼宇和楼层' : '请选择食堂或其他位置', locations);
         updateFeedbackLocation();
         const context = $('#feedback-stall-context');
         context.hidden = !target;
@@ -3117,35 +3209,50 @@
         }
     }
 
+    let feedbackRequest = 0;
+
     async function loadFeedback() {
+        const {h, render, Fragment} = Vue;
+        const request = ++feedbackRequest;
         const list = $('#admin-feedback-list');
         const status = $('#feedback-status').value;
-        list.textContent = '正在加载…';
+        renderAdminPlaceholder(list, '正在加载…');
         try {
             const rows = await api(`/api/admin/feedback?status=${status}`);
-            if ($('#feedback-status').value !== status) return;
-            const isCampus = row => state.admin.categories.some(category => category.id === row.suggested_category_id && category.kind === 'campus');
-            const options = row => state.admin.categories
-                .filter(category => (category.kind === 'campus') === isCampus(row))
-                .map(category => `<option value="${Number(category.id)}"${category.id === row.suggested_category_id ? ' selected' : ''}>${escapeHtml(category.name)}</option>`).join('');
-            list.innerHTML = rows.length ? rows.map(row => `
-                <article class="detail-panel stack" data-feedback-id="${Number(row.id)}">
-                    <strong>${row.kind === 'stall' ? (isCampus(row) ? '校内美食推荐 · ' : '档口推荐 · ') + escapeHtml(row.name) : '问题反馈'}</strong>
-                    <p class="muted">${escapeHtml(formatTime(row.created_at))} · ${{pending:'待处理',approved:'已入库',closed:row.kind === 'stall' ? '已忽略' : '已处理'}[row.status]}</p>
-                    <p class="comment-text">${escapeHtml(row.content || '（无补充说明）')}</p>
-                    ${row.has_photo ? `<div><button type="button" class="btn btn-soft btn-sm" data-action="feedback-photo" data-id="${Number(row.id)}">查看提交照片</button></div>` : ''}
-                    ${row.status === 'pending' && row.kind === 'stall' ? `<form class="inline-form" data-feedback-approve>
-                        <input name="name" aria-label="正式档口名称" value="${escapeHtml(row.name)}" maxlength="100" required>
-                        <select name="category" aria-label="所属食堂或楼宇" required><option value="">请选择所属位置</option>${options(row)}</select>
-                        <div class="feedback-review-actions">
-                            <button type="submit" class="btn btn-primary">审核并入库</button>
-                            <button type="button" class="btn btn-ghost" data-action="feedback-close" data-id="${Number(row.id)}">忽略</button>
-                        </div>
-                    </form>` : ''}
-                    ${row.status === 'pending' && row.kind !== 'stall' ? `<div><button type="button" class="btn btn-ghost btn-sm" data-action="feedback-close" data-id="${Number(row.id)}">标为已处理</button></div>` : ''}
-                </article>`).join('') : adminEmpty('暂无反馈。');
+            if (request !== feedbackRequest || $('#feedback-status').value !== status) return;
+            if (!rows.length) {
+                renderAdminPlaceholder(list, '暂无反馈。');
+                return;
+            }
+            render(h(Fragment, rows.map(row => {
+                const categories = state.admin.categories;
+                const campus = categories.some(category => category.id === row.suggested_category_id && category.kind === 'campus');
+                const isStall = row.kind === 'stall';
+                const pending = row.status === 'pending';
+                const label = {pending: '待处理', approved: '已入库', closed: isStall ? '已忽略' : '已处理'};
+                const id = {'data-id': row.id};
+                const approve = () => h('form', {class: 'inline-form', 'data-feedback-approve': ''}, [
+                    h('input', {name: 'name', 'aria-label': '正式档口名称', value: row.name, maxlength: 100, required: true}),
+                    h('select', {name: 'category', 'aria-label': '所属食堂或楼宇', required: true, value: row.suggested_category_id || ''}, [
+                        selectOption('', '请选择所属位置'),
+                        ...categories.filter(category => (category.kind === 'campus') === campus)
+                            .map(category => selectOption(category.id, category.name))
+                    ]),
+                    h('div', {class: 'feedback-review-actions'}, [
+                        h('button', {type: 'submit', class: 'btn btn-primary'}, '审核并入库'),
+                        actionButton('忽略', 'feedback-close', 'btn btn-ghost', id)
+                    ])
+                ]);
+                return h('article', {key: row.id, class: 'detail-panel stack', 'data-feedback-id': row.id}, [
+                    h('strong', isStall ? (campus ? '校内美食推荐 · ' : '档口推荐 · ') + row.name : '问题反馈'),
+                    h('p', {class: 'muted'}, formatTime(row.created_at) + ' · ' + label[row.status]),
+                    h('p', {class: 'comment-text'}, row.content || '（无补充说明）'),
+                    row.has_photo ? h('div', [actionButton('查看提交照片', 'feedback-photo', 'btn btn-soft btn-sm', id)]) : null,
+                    pending ? (isStall ? approve() : h('div', [actionButton('标为已处理', 'feedback-close', 'btn btn-ghost btn-sm', id)])) : null
+                ]);
+            })), list);
         } catch (error) {
-            if ($('#feedback-status').value === status) list.textContent = error.message;
+            if (request === feedbackRequest && $('#feedback-status').value === status) renderAdminPlaceholder(list, error.message);
         }
     }
 
@@ -3184,32 +3291,33 @@
     }
 
     function renderAdminCategories() {
+        const {h, render, Fragment} = Vue;
         const list = $('#admin-category-list');
         if (!list || !state.admin) return;
 
         if (!state.admin.categories.length) {
-            list.innerHTML = adminEmpty('还没有食堂，在上方输入名称添加。');
+            renderAdminPlaceholder(list, '还没有食堂，在上方输入名称添加。');
             return;
         }
-
-        list.innerHTML = state.admin.categories.map(category => {
+        render(h(Fragment, state.admin.categories.map(category => {
             const count = state.admin.canteens.filter(canteen => canteen.category_id === category.id && canteen.is_active !== false).length;
-            return `<div class="admin-row">
-                <div class="admin-row-main">
-                    <strong data-category-name>${escapeHtml(category.name)}</strong>
-                    <form class="inline-form" data-menu-action="rename-category" data-id="${Number(category.id)}" hidden>
-                        <input name="name" aria-label="${category.kind === 'campus' ? '校内地点名称' : '食堂名称'}" value="${escapeHtml(category.name)}" maxlength="100" required>
-                        <button type="submit" class="btn btn-soft btn-sm">保存</button>
-                        <button type="button" class="btn btn-ghost btn-sm" data-action="cancel-category-edit">取消</button>
-                    </form>
-                    <p>ID ${escapeHtml(category.id)} · ${formatNumber(count)} 个在售档口</p>
-                </div>
-                <div class="admin-row-actions">
-                    <button type="button" class="btn btn-soft btn-sm" data-action="edit-category">编辑</button>
-                    <button type="button" class="btn btn-danger btn-sm" data-action="admin-delete-category" data-id="${category.id}">删除</button>
-                </div>
-            </div>`;
-        }).join('');
+            return h('div', {key: category.id + ':' + category.name, class: 'admin-row'}, [
+                h('div', {class: 'admin-row-main'}, [
+                    h('strong', {'data-category-name': ''}, category.name),
+                    h('form', {class: 'inline-form', 'data-menu-action': 'rename-category', 'data-id': category.id, hidden: true}, [
+                        h('input', {name: 'name', 'aria-label': category.kind === 'campus' ? '校内地点名称' : '食堂名称',
+                            defaultValue: category.name, maxlength: 100, required: true}),
+                        h('button', {type: 'submit', class: 'btn btn-soft btn-sm'}, '保存'),
+                        actionButton('取消', 'cancel-category-edit', 'btn btn-ghost btn-sm')
+                    ]),
+                    h('p', 'ID ' + category.id + ' · ' + formatNumber(count) + ' 个在售档口')
+                ]),
+                h('div', {class: 'admin-row-actions'}, [
+                    actionButton('编辑', 'edit-category', 'btn btn-soft btn-sm'),
+                    actionButton('删除', 'admin-delete-category', 'btn btn-danger btn-sm', {'data-id': category.id})
+                ])
+            ]);
+        })), list);
     }
 
     function toggleCategoryEdit(button, editing) {
@@ -3226,14 +3334,13 @@
     }
 
     function renderAdminFoodTypes() {
+        const {h, render, Fragment} = Vue;
         const list = $('#admin-food-types');
-        const add = $('#add-food-type');
-        add.querySelector('button').disabled = !foodCatalog;
+        $('#add-food-type').querySelector('button').disabled = !foodCatalog;
         if (!foodCatalog) {
-            list.textContent = '暂时无法读取餐饮分类，请刷新后重试。';
+            renderAdminPlaceholder(list, '暂时无法读取餐饮分类，请刷新后重试。');
             return;
         }
-        const expanded = new Set($$('details[data-food-type-stalls][open]', list).map(item => item.dataset.foodTypeStalls));
         const stallsByType = new Map();
         for (const stall of state.admin?.canteens || []) {
             for (const {id} of stallFoodTypes(stall)) {
@@ -3241,94 +3348,82 @@
                 stallsByType.get(id).push(stall);
             }
         }
-        list.innerHTML = foodTypes().map(({id, name}) => {
+        const types = foodTypes();
+        render(types.length ? h(Fragment, types.map(({id, name}) => {
             const stalls = stallsByType.get(id) || [];
-            return `
-            <div class="admin-review-label" data-food-type-id="${escapeHtml(id)}">
-                <div class="panel-head">
-                    <details data-food-type-stalls="${escapeHtml(id)}"${expanded.has(id) ? ' open' : ''}>
-                        <summary>${escapeHtml(name)} · ${formatNumber(stalls.length)} 个档口</summary>
-                        <div class="admin-list">
-                            ${stalls.map(stall => `<div class="admin-row">
-                                <div class="admin-row-main">
-                                    <strong>${escapeHtml(stall.name)}</strong>
-                                    <p>${escapeHtml(stall.category_name || '未分类')}${stall.is_active === false ? ' · 已归档' : ''}</p>
-                                </div>
-                                <button type="button" class="btn btn-soft btn-sm" data-action="open-detail" data-id="${Number(stall.id)}">管理</button>
-                            </div>`).join('') || '<p class="muted">这个分类还没有档口。</p>'}
-                        </div>
-                    </details>
-                    <button type="button" class="btn btn-danger btn-sm" data-action="delete-food-type">删除分类</button>
-                </div>
-                <details>
-                    <summary>改名</summary>
-                    <form class="inline-form">
-                        <input name="name" aria-label="餐饮分类名称" value="${escapeHtml(name)}" maxlength="20" required>
-                        <button type="submit" class="btn btn-soft">保存名称</button>
-                    </form>
-                </details>
-            </div>`;
-        }).join('') || '<p class="muted">暂无餐饮分类。</p>';
+            return h('div', {key: id, class: 'admin-review-label', 'data-food-type-id': id}, [
+                h('div', {class: 'panel-head'}, [
+                    h('details', {'data-food-type-stalls': id}, [
+                        h('summary', name + ' · ' + formatNumber(stalls.length) + ' 个档口'),
+                        h('div', {class: 'admin-list'}, stalls.length ? stalls.map(stall => h('div', {key: stall.id, class: 'admin-row'}, [
+                            h('div', {class: 'admin-row-main'}, [
+                                h('strong', stall.name),
+                                h('p', (stall.category_name || '未分类') + (stall.is_active === false ? ' · 已归档' : ''))
+                            ]),
+                            actionButton('管理', 'open-detail', 'btn btn-soft btn-sm', {'data-id': stall.id})
+                        ])) : [h('p', {class: 'muted'}, '这个分类还没有档口。')])
+                    ]),
+                    actionButton('删除分类', 'delete-food-type', 'btn btn-danger btn-sm')
+                ]),
+                h('details', [
+                    h('summary', '改名'),
+                    h('form', {class: 'inline-form'}, [
+                        h('input', {name: 'name', 'aria-label': '餐饮分类名称', value: name, maxlength: 20, required: true}),
+                        h('button', {type: 'submit', class: 'btn btn-soft'}, '保存名称')
+                    ])
+                ])
+            ]);
+        })) : h('p', {class: 'muted'}, '暂无餐饮分类。'), list);
     }
 
-    async function saveFoodTypeChange(button, path, method, body, detailId = null) {
-        const form = detailId ? button.form : null;
-        const fields = form ? [...form.querySelectorAll('input, button')] : [];
-        fields.forEach(field => field.disabled = true);
+    async function saveFoodTypeChange(button, path, method, body) {
         setBusy(button, true);
         try {
             await api(path, {method, body});
             if (method === 'POST') button.form.reset();
             await loadFoodTypes();
-            if (form?.isConnected && state.detailId === detailId && foodCatalog) {
-                const selected = new Set(stallFoodTypes(state.detailData).map(type => type.id));
-                form.querySelectorAll('input[name="food-type"]').forEach(input => input.checked = selected.has(input.value));
-                $('[data-food-type-mode]', form).textContent = Object.hasOwn(foodCatalog.overrides, detailId)
-                    ? '当前使用手动分类' : '当前根据档口名自动分类';
-            }
             toast('餐饮分类已更新');
         } catch (error) {
             toast(error.message, 'error');
         } finally {
-            fields.forEach(field => field.disabled = false);
             setBusy(button, false);
         }
     }
 
     function renderAdminCanteens() {
+        const {h, render, Fragment} = Vue;
         const list = $('#admin-canteen-list');
         if (!list || !state.admin) return;
         const select = $('#admin-canteen-filter');
         const previous = select.value;
-        select.replaceChildren(new Option('总览 · 全部食堂', ''));
-        state.admin.categories.forEach(category => select.add(new Option(category.name, category.id)));
+        renderSelectOptions(select, '总览 · 全部食堂', state.admin.categories.map(category => selectOption(category.id, category.name)));
         if (Array.from(select.options).some(option => option.value === previous)) select.value = previous;
         const stalls = state.admin.canteens.filter(canteen => !select.value || String(canteen.category_id) === select.value);
-
         if (!stalls.length) {
-            list.innerHTML = adminEmpty(select.value ? '这个食堂还没有档口。' : '还没有档口，先添加一个吧。');
+            renderAdminPlaceholder(list, select.value ? '这个食堂还没有档口。' : '还没有档口，先添加一个吧。');
             return;
         }
 
-        list.innerHTML = stalls.map(canteen => `
-            <div class="admin-row">
-                <div class="admin-row-main">
-                    <strong>${escapeHtml(canteen.name)}</strong>
-                    <p>
-                        ${escapeHtml(canteen.category_name || '未分类')} · ID ${escapeHtml(canteen.id)}
-                        ${stallFoodTypes(canteen).map(({name}) => `<span class="badge">${escapeHtml(name)}</span>`).join('')}
-                        ${canteen.is_active === false ? '<span class="badge badge-red">已归档</span>' : ''}
-                    </p>
-                </div>
-                <div class="admin-row-actions">
-                    <button type="button" class="btn btn-soft btn-sm" data-action="open-detail" data-id="${canteen.id}">管理</button>
-                    ${canteen.is_active === false
-                        ? `<button type="button" class="btn btn-soft btn-sm" data-action="admin-restore-canteen" data-id="${canteen.id}">恢复上架</button>`
-                        : `<button type="button" class="btn btn-ghost btn-sm" data-action="admin-archive-canteen" data-id="${canteen.id}">下架</button>`}
-                    <button type="button" class="btn btn-danger btn-sm" data-action="admin-delete-canteen" data-id="${canteen.id}">删除</button>
-                </div>
-            </div>
-        `).join('');
+        render(h(Fragment, stalls.map(canteen => {
+            const archived = canteen.is_active === false;
+            const attrs = {'data-id': canteen.id};
+            return h('div', {key: canteen.id, class: 'admin-row'}, [
+                h('div', {class: 'admin-row-main'}, [
+                    h('strong', canteen.name),
+                    h('p', [
+                        (canteen.category_name || '未分类') + ' · ID ' + canteen.id + ' ',
+                        ...stallFoodTypes(canteen).map(({id, name}) => h('span', {key: id, class: 'badge'}, name)),
+                        archived ? h('span', {class: 'badge badge-red'}, '已归档') : null
+                    ])
+                ]),
+                h('div', {class: 'admin-row-actions'}, [
+                    actionButton('管理', 'open-detail', 'btn btn-soft btn-sm', attrs),
+                    archived ? actionButton('恢复上架', 'admin-restore-canteen', 'btn btn-soft btn-sm', attrs)
+                        : actionButton('下架', 'admin-archive-canteen', 'btn btn-ghost btn-sm', attrs),
+                    actionButton('删除', 'admin-delete-canteen', 'btn btn-danger btn-sm', attrs)
+                ])
+            ]);
+        })), list);
     }
 
     function renderAdminRatings() {
@@ -3341,9 +3436,11 @@
         const stalls = new Map(state.admin.ratings.map(rating => [rating.canteen_id, rating.canteen_name || '未知档口']));
         const selectedStall = stallSelect.value;
         const selectedLabel = labelSelect.value;
-        stallSelect.replaceChildren(new Option('全部档口', ''), ...Array.from(stalls, ([id, name]) => new Option(name, id)));
-        labelSelect.replaceChildren(new Option('全部标签', ''), new Option('无标签', 'untagged'),
-            ...state.admin.reviewLabels.map(({name}) => new Option(name, 'label:' + name)));
+        renderSelectOptions(stallSelect, '全部档口', Array.from(stalls, ([id, name]) => selectOption(id, name)));
+        renderSelectOptions(labelSelect, '全部标签', [
+            selectOption('untagged', '无标签'),
+            ...state.admin.reviewLabels.map(({name}) => selectOption('label:' + name, name))
+        ]);
         if (Array.from(stallSelect.options).some(option => option.value === selectedStall)) stallSelect.value = selectedStall;
         if (Array.from(labelSelect.options).some(option => option.value === selectedLabel)) labelSelect.value = selectedLabel;
         const query = $('#admin-rating-search').value.trim().toLowerCase();
@@ -3364,39 +3461,42 @@
             `${rows[0]?.is_guest ? '访客 #' + userId : rows[0]?.user || '该作者'}的全部评价（${rows.length} 条）`;
 
         if (!rows.length) {
-            list.innerHTML = adminEmpty(state.admin.ratings.length ? '没有找到符合条件的评价。' : '还没有评价。');
+            renderAdminPlaceholder(list, state.admin.ratings.length ? '没有找到符合条件的评价。' : '还没有评价。');
             return;
         }
 
-        list.innerHTML = rows.map(rating => `
-            <div class="admin-row">
-                <div class="admin-row-main">
-                    <strong>${rating.author_id
-                        ? `<button type="button" class="link-btn" data-action="open-public-profile" data-id="${Number(rating.author_id)}"
-                            aria-label="查看 ${escapeHtml(rating.user)} 的主页">${escapeHtml(rating.user)}</button>`
-                        : escapeHtml(rating.is_guest ? '访客 #' + rating.user_id : rating.user)} · ${escapeHtml(rating.canteen_name || '未知档口')}</strong>
-                    <p>
-                        ${escapeHtml(formatTime(rating.created_at))}
-                        ${rating.is_deleted ? '<span class="badge badge-red">已删除</span>' : '<span class="badge badge-amber">' + escapeHtml(rating.score) + ' 分</span>'}
-                        <span class="badge badge-amber">${rating.is_guest ? '访客评价' : rating.is_anonymous ? '匿名评价' : '公开评价'}</span>
-                        ${rating.moderation_label ? `<span class="badge badge-amber">${escapeHtml(rating.moderation_label)}</span>` : ''}
-                    </p>
-                    <p class="admin-comment">${escapeHtml(rating.comment || '（无文字评价）')}</p>
-                </div>
-                <div class="admin-row-actions">
-                    ${userId === null && rating.user_id ? `<button type="button" class="btn btn-ghost btn-sm"
-                        data-action="admin-rating-by-author" data-id="${Number(rating.user_id)}">查看该作者全部评价</button>` : ''}
-                    ${!rating.is_deleted ? reviewLabelSelect(rating, state.admin.reviewLabels) : ''}
-                    ${rating.is_deleted
-                        ? `<button type="button" class="btn btn-soft btn-sm" data-action="admin-restore-rating" data-id="${rating.id}">恢复</button>`
-                        : `<button type="button" class="btn btn-danger btn-sm" data-action="admin-delete-rating" data-id="${rating.id}">删除</button>`}
-                </div>
-            </div>
-        `).join('');
+        const {h, render, Fragment} = Vue;
+        const badge = (label, red = false) => h('span', {class: red ? 'badge badge-red' : 'badge badge-amber'}, label);
+        render(h(Fragment, rows.map(rating => {
+            const id = {'data-id': rating.id};
+            return h('div', {key: rating.id, class: 'admin-row'}, [
+                h('div', {class: 'admin-row-main'}, [
+                    h('strong', [
+                        rating.author_id ? actionButton(rating.user, 'open-public-profile', 'link-btn', {
+                            'data-id': rating.author_id, 'aria-label': '查看 ' + rating.user + ' 的主页'
+                        }) : rating.is_guest ? '访客 #' + rating.user_id : rating.user,
+                        ' · ' + (rating.canteen_name || '未知档口')
+                    ]),
+                    h('p', [
+                        formatTime(rating.created_at) + ' ',
+                        rating.is_deleted ? badge('已删除', true) : badge(rating.score + ' 分'),
+                        badge(rating.is_guest ? '访客评价' : rating.is_anonymous ? '匿名评价' : '公开评价'),
+                        rating.moderation_label ? badge(rating.moderation_label) : null
+                    ]),
+                    h('p', {class: 'admin-comment'}, rating.comment || '（无文字评价）')
+                ]),
+                h('div', {class: 'admin-row-actions'}, [
+                    userId === null && rating.user_id ? actionButton('查看该作者全部评价', 'admin-rating-by-author',
+                        'btn btn-ghost btn-sm', {'data-id': rating.user_id}) : null,
+                    rating.is_deleted ? null : reviewLabelSelect(rating, state.admin.reviewLabels),
+                    rating.is_deleted ? actionButton('恢复', 'admin-restore-rating', 'btn btn-soft btn-sm', id)
+                        : actionButton('删除', 'admin-delete-rating', 'btn btn-danger btn-sm', id)
+                ])
+            ]);
+        })), list);
     }
 
     async function voteOnReview(id, button) {
-        const list = button.closest('#detail-review-list');
         const review = state.detailData?.comments?.find(item => item.id === id);
         const buttons = $$('button', button.closest('.review-votes'));
         const vote = button.getAttribute('aria-pressed') === 'true' ? 0 : Number(button.dataset.vote);
@@ -3404,10 +3504,8 @@
         try {
             await ensurePostingIdentity();
             const result = await api(`/api/ratings/${id}/vote`, { method: 'PUT', body: { vote } });
-            if (review) Object.assign(review, result);
-            const sort = list?.isConnected && $('#detail-review-sort');
-            if (sort && (sort.value === 'hot' || !button.isConnected)) {
-                sort.dispatchEvent(new Event('change'));
+            if (review) {
+                Object.assign(review, result);
                 return;
             }
             for (const item of buttons) {
@@ -3423,20 +3521,23 @@
     }
 
     function renderReviewLabels() {
-        $('#admin-review-label-list').innerHTML = state.admin.reviewLabels.map(({name}) => `
-            <div class="admin-review-label" data-review-label-name="${escapeHtml(name)}">
-                <div class="panel-head">
-                    <strong>${escapeHtml(name)}</strong>
-                    <button type="button" class="btn btn-danger btn-sm" data-action="delete-review-label">删除标签</button>
-                </div>
-                <details>
-                    <summary>改名</summary>
-                    <form class="inline-form">
-                        <input name="label" aria-label="标签名称" maxlength="20" required value="${escapeHtml(name)}">
-                        <button type="submit" class="btn btn-soft">保存名称</button>
-                    </form>
-                </details>
-            </div>`).join('') || '<p class="muted">暂无标签</p>';
+        const {h, render, Fragment} = Vue;
+        const labels = state.admin.reviewLabels;
+        render(labels.length ? h(Fragment, labels.map(({name}) => h('div', {
+            key: name, class: 'admin-review-label', 'data-review-label-name': name
+        }, [
+            h('div', {class: 'panel-head'}, [
+                h('strong', name),
+                h('button', {type: 'button', class: 'btn btn-danger btn-sm', 'data-action': 'delete-review-label'}, '删除标签')
+            ]),
+            h('details', [
+                h('summary', '改名'),
+                h('form', {class: 'inline-form'}, [
+                    h('input', {name: 'label', 'aria-label': '标签名称', maxlength: 20, required: true, value: name}),
+                    h('button', {type: 'submit', class: 'btn btn-soft'}, '保存名称')
+                ])
+            ])
+        ]))) : h('p', {class: 'muted'}, '暂无标签'), $('#admin-review-label-list'));
     }
 
     async function saveReviewLabelCatalog(method, button, body) {
@@ -3453,7 +3554,7 @@
         }
     }
 
-    async function setReviewLabel(rating, select, render) {
+    async function setReviewLabel(rating, select, render = () => {}) {
         if (!rating) return;
         select.disabled = true;
         try {
@@ -3478,55 +3579,60 @@
     }
 
     function renderAdminReports() {
+        const {h, render, Fragment} = Vue;
         const list = $('#admin-report-list');
         if (!list || !state.admin) return;
 
         if (!state.admin.reports.length) {
-            list.innerHTML = adminEmpty('当前没有待处理的举报。');
+            renderAdminPlaceholder(list, '当前没有待处理的举报。');
             return;
         }
 
-        list.innerHTML = state.admin.reports.map(report => {
+        render(h(Fragment, state.admin.reports.map(report => {
             const rating = report.rating || {};
             const hasRating = rating.id !== null && rating.id !== undefined;
-            return `<div class="admin-row">
-                <div class="admin-row-main">
-                    <strong>举报 #${escapeHtml(report.report_id)} · ${escapeHtml(report.reporter || '匿名')}</strong>
-                    <p>${escapeHtml(formatTime(report.reported_at))}</p>
-                    <p class="admin-comment">理由：${escapeHtml(report.reason)}</p>
-                    <p>被举报评价：${escapeHtml(rating.user || '未知')} / ${escapeHtml(rating.canteen_name || '未知档口')} / ${escapeHtml(formatScore(rating.score))} 分</p>
-                    <p class="admin-comment">${escapeHtml(rating.comment || '（评价已删除或无文字内容）')}</p>
-                </div>
-                <div class="admin-row-actions">
-                    ${hasRating ? `<button type="button" class="btn btn-danger btn-sm" data-action="admin-delete-rating" data-id="${rating.id}">删除评价</button>` : ''}
-                    <button type="button" class="btn btn-soft btn-sm" data-action="admin-delete-report" data-id="${report.report_id}">标记已处理</button>
-                </div>
-            </div>`;
-        }).join('');
+            return h('div', {key: report.report_id, class: 'admin-row'}, [
+                h('div', {class: 'admin-row-main'}, [
+                    h('strong', '举报 #' + report.report_id + ' · ' + (report.reporter || '匿名')),
+                    h('p', formatTime(report.reported_at)),
+                    h('p', {class: 'admin-comment'}, '理由：' + report.reason),
+                    h('p', '被举报评价：' + (rating.user || '未知') + ' / ' + (rating.canteen_name || '未知档口') +
+                        ' / ' + formatScore(rating.score) + ' 分'),
+                    h('p', {class: 'admin-comment'}, rating.comment || '（评价已删除或无文字内容）')
+                ]),
+                h('div', {class: 'admin-row-actions'}, [
+                    hasRating ? h('button', {type: 'button', class: 'btn btn-danger btn-sm',
+                        'data-action': 'admin-delete-rating', 'data-id': rating.id}, '删除评价') : null,
+                    h('button', {type: 'button', class: 'btn btn-soft btn-sm',
+                        'data-action': 'admin-delete-report', 'data-id': report.report_id}, '标记已处理')
+                ])
+            ]);
+        })), list);
     }
 
     function renderAdminActions() {
+        const {h, render, Fragment} = Vue;
         const list = $('#admin-action-list');
         if (!list || !state.admin) return;
 
         if (!state.admin.actions.length) {
-            list.innerHTML = adminEmpty('还没有管理员操作记录。');
+            renderAdminPlaceholder(list, '还没有管理员操作记录。');
             return;
         }
 
-        list.innerHTML = state.admin.actions.map(action => {
+        render(h(Fragment, state.admin.actions.map(action => {
             const label = ACTION_LABELS[action.action] || action.action;
             const type = TYPE_LABELS[action.target_type] || action.target_type || '对象';
             const targetId = action.target_id === null || action.target_id === undefined ? '-' : action.target_id;
-            return `<div class="admin-row">
-                <div class="admin-row-main">
-                    <strong>${escapeHtml(label)}</strong>
-                    <p>管理员：${escapeHtml(action.admin_user || '未知')} · ${escapeHtml(formatTime(action.created_at))}</p>
-                    <p>${escapeHtml(type)} #${escapeHtml(targetId)}</p>
-                    <p class="admin-comment">${escapeHtml(action.details || '')}</p>
-                </div>
-            </div>`;
-        }).join('');
+            return h('div', {key: action.id, class: 'admin-row'}, [
+                h('div', {class: 'admin-row-main'}, [
+                    h('strong', label),
+                    h('p', '管理员：' + (action.admin_user || '未知') + ' · ' + formatTime(action.created_at)),
+                    h('p', type + ' #' + targetId),
+                    h('p', {class: 'admin-comment'}, action.details || '')
+                ])
+            ]);
+        })), list);
     }
 
     function fillAdminCategorySelect() {
@@ -3537,9 +3643,7 @@
         const categories = state.admin && state.admin.categories.length
             ? state.admin.categories
             : getCategories();
-        select.innerHTML = '<option value="">选择所属食堂</option>' + categories
-            .map(category => `<option value="${category.id}">${escapeHtml(category.name)}</option>`)
-            .join('');
+        renderSelectOptions(select, '选择所属食堂', categories.map(category => selectOption(category.id, category.name)));
 
         if (current && Array.from(select.options).some(option => option.value === current)) {
             select.value = current;
@@ -3661,7 +3765,7 @@
         try {
             await api(`/api/admin/ratings/${id}`, { method: 'DELETE' });
             toast('评价已删除');
-            if (detailId && state.detailId === detailId && $('#detail-modal').classList.contains('is-open')) await openDetail(detailId);
+            if (detailId && state.detailId === detailId && isModalOpen($('#detail-modal'))) await openDetail(detailId);
             await refreshAll();
         } catch (error) {
             toast(error.message, 'error');
@@ -3718,36 +3822,42 @@
 
     /* ---------------- 弹层交互 ---------------- */
 
-    const modalStack = [];
+    const modalStack = Vue.shallowRef([]);
     const modalFocusOrigins = new WeakMap();
 
-    function updateModalLayers() {
-        const top = modalStack.at(-1);
+    function isModalOpen(modal) {
+        return modalStack.value.includes(modal);
+    }
+
+    function closeOpenModals(except = null) {
+        modalStack.value.filter(modal => modal !== except).reverse().forEach(closeModal);
+    }
+
+    function renderModalLayers(stack) {
+        const top = stack.at(-1);
         $$('.modal').forEach(modal => {
-            const index = modalStack.indexOf(modal);
+            const index = stack.indexOf(modal);
+            modal.classList.toggle('is-open', index !== -1);
             modal.style.zIndex = index < 0 ? '' : String(80 + index * 2);
             modal.inert = modal !== top;
             modal.setAttribute('aria-hidden', String(modal !== top));
         });
         $$('header.site-header, main.page').forEach(region => { region.inert = Boolean(top); });
+        document.body.classList.toggle('modal-open', Boolean(top));
     }
 
     function openModal(modal) {
         if (!modal) return;
-        if (!modalStack.includes(modal)) {
+        if (!modalStack.value.includes(modal)) {
             modalFocusOrigins.set(modal, document.activeElement);
-            modalStack.push(modal);
+            modalStack.value = [...modalStack.value, modal];
         }
-        modal.classList.add('is-open');
-        modal.setAttribute('aria-hidden', 'false');
-        document.body.classList.add('modal-open');
-        updateModalLayers();
 
         const focusTarget = modal.querySelector('input:not([type="hidden"]), textarea, select')
             || modal.querySelector('.modal-close');
         if (focusTarget) {
             window.setTimeout(() => {
-                if (modalStack.at(-1) === modal) focusTarget.focus({ preventScroll: true });
+                if (modalStack.value.at(-1) === modal) focusTarget.focus({ preventScroll: true });
             }, 60);
         }
     }
@@ -3756,6 +3866,52 @@
     let viewerIndex = 0;
     let viewerZoom = 1;
     let photoGesture = null;
+    let viewerMessage = '';
+    let viewerImageStyle = null;
+
+    function renderPhotoViewer() {
+        const {h, render, Fragment} = Vue;
+        const item = viewerPhotos[viewerIndex];
+        render(item ? h(Fragment, [
+            h('div', {class: 'photo-viewer-toolbar'}, [
+                h('h2', {id: 'photo-viewer-title'}, '查看照片'),
+                h('span', {id: 'photo-viewer-count', role: 'status'}, `${viewerIndex + 1} / ${viewerPhotos.length}`),
+                actionButton('−', 'photo-zoom-out', 'btn btn-ghost-light btn-sm', {'aria-label': '缩小照片', disabled: viewerZoom <= 1}),
+                actionButton('适合屏幕', 'photo-reset', 'btn btn-ghost-light btn-sm'),
+                actionButton('＋', 'photo-zoom-in', 'btn btn-ghost-light btn-sm', {'aria-label': '放大照片', disabled: viewerZoom >= 3}),
+                h('button', {type: 'button', class: 'icon-btn', 'data-close-modal': '', 'aria-label': '关闭照片'}, '×')
+            ]),
+            h('div', {
+                class: 'photo-viewer-stage', id: 'photo-viewer-stage',
+                onPointerdown(event) {
+                    photoGesture = event.pointerType === 'touch' && viewerZoom === 1 ? {x: event.clientX, y: event.clientY} : null;
+                },
+                onPointerup(event) {
+                    if (!photoGesture) return;
+                    const dx = event.clientX - photoGesture.x;
+                    const dy = event.clientY - photoGesture.y;
+                    photoGesture = null;
+                    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) stepViewerPhoto(dx < 0 ? 1 : -1);
+                },
+                onPointercancel() { photoGesture = null; }
+            }, [
+                h('img', {id: 'photo-viewer-image', alt: item.alt, src: item.src, draggable: false, style: viewerImageStyle,
+                    onLoad: () => setViewerMessage(''),
+                    onError: () => setViewerMessage('照片加载失败，请关闭后重试。')}),
+                h('p', {id: 'photo-viewer-message', role: 'status'}, viewerMessage)
+            ]),
+            h('div', {class: 'photo-viewer-navigation'}, [
+                actionButton('上一张', 'photo-previous', 'btn btn-ghost-light', {id: 'photo-viewer-previous', disabled: viewerIndex === 0}),
+                h('span', '左右切换 · 放大后可滚动查看'),
+                actionButton('下一张', 'photo-next', 'btn btn-ghost-light', {id: 'photo-viewer-next', disabled: viewerIndex === viewerPhotos.length - 1})
+            ])
+        ]) : null, $('#photo-viewer-content'));
+    }
+
+    function setViewerMessage(message) {
+        viewerMessage = message;
+        renderPhotoViewer();
+    }
 
     function openPhotoViewer(image) {
         const gallery = image.closest('.review-photo-gallery');
@@ -3776,26 +3932,17 @@
 
     function resizeViewerPhoto() {
         const stage = $('#photo-viewer-stage');
-        const image = $('#photo-viewer-image');
-        image.style.width = stage.clientWidth * viewerZoom + 'px';
-        image.style.height = stage.clientHeight * viewerZoom + 'px';
-        $('#photo-viewer-modal [data-action="photo-zoom-in"]').disabled = viewerZoom >= 3;
-        $('#photo-viewer-modal [data-action="photo-zoom-out"]').disabled = viewerZoom <= 1;
+        if (!stage) return;
+        viewerImageStyle = {width: stage.clientWidth * viewerZoom + 'px', height: stage.clientHeight * viewerZoom + 'px'};
+        renderPhotoViewer();
     }
 
     function showViewerPhoto() {
         const item = viewerPhotos[viewerIndex];
         if (!item) return;
         viewerZoom = 1;
-        const stage = $('#photo-viewer-stage');
-        stage.scrollTo(0, 0);
-        $('#photo-viewer-message').textContent = '正在加载照片…';
-        const image = $('#photo-viewer-image');
-        image.alt = item.alt;
-        image.src = item.src;
-        $('#photo-viewer-count').textContent = `${viewerIndex + 1} / ${viewerPhotos.length}`;
-        $('#photo-viewer-previous').disabled = viewerIndex === 0;
-        $('#photo-viewer-next').disabled = viewerIndex === viewerPhotos.length - 1;
+        setViewerMessage('正在加载照片…');
+        $('#photo-viewer-stage').scrollTo(0, 0);
         resizeViewerPhoto();
     }
 
@@ -3810,7 +3957,7 @@
     }
 
     function handleModalKeys(event) {
-        const top = modalStack.at(-1);
+        const top = modalStack.value.at(-1);
         if (!top) return;
         if (event.key === 'Escape') {
             event.preventDefault();
@@ -3843,27 +3990,28 @@
 
     function closeModal(modal) {
         if (!modal) return;
-        const wasOpen = modal.classList.contains('is-open');
+        const wasOpen = modalStack.value.includes(modal);
         if (wasOpen && modal.id === 'recommendation-modal') recommendationRequest++;
-        modal.classList.remove('is-open');
-        modal.setAttribute('aria-hidden', 'true');
-        const stackIndex = modalStack.indexOf(modal);
-        if (stackIndex !== -1) modalStack.splice(stackIndex, 1);
+        if (wasOpen) modalStack.value = modalStack.value.filter(item => item !== modal);
         if (modal.id === 'photo-viewer-modal') {
             viewerPhotos = [];
-            $('#photo-viewer-image').removeAttribute('src');
+            photoGesture = null;
+            viewerImageStyle = null;
+            renderPhotoViewer();
         }
         if (modal.id === 'forum-thread-modal') {
             threadId = null;
             forumThreadRequest++;
         }
+        if (wasOpen && modal.id === 'report-modal') Vue.render(null, $('#report-content'));
 
         if (modal.id === 'detail-modal') {
+            unmountStallControls();
             state.detailId = null;
             state.detailData = null;
             destroyChart();
             const content = $('#detail-content');
-            if (content) content.innerHTML = '';
+            if (content) Vue.render(null, content);
         }
         if (modal.id === 'rating-modal') {
             clearRatingPhotoPreviews();
@@ -3874,22 +4022,17 @@
                 openMyReviews();
             }
         }
-        if (!document.querySelector('.modal.is-open')) {
-            document.body.classList.remove('modal-open');
-        }
-        updateModalLayers();
         const target = modalFocusOrigins.get(modal);
         if (wasOpen && target?.isConnected && !target.closest('[inert]')) target.focus({ preventScroll: true });
     }
 
     function showFileTip() {
-        const header = $('.site-header');
-        const tip = `<div class="file-tip">当前页面是通过本地文件打开的，接口请求会失败。请先运行 <code>python app.py</code>，然后访问 <a href="http://127.0.0.1:5000/">http://127.0.0.1:5000/</a>。</div>`;
-        if (header) {
-            header.insertAdjacentHTML('afterend', tip);
-        } else {
-            document.body.insertAdjacentHTML('afterbegin', tip);
-        }
+        const {h, render} = Vue;
+        render(h('div', {class: 'file-tip'}, [
+            '当前页面是通过本地文件打开的，接口请求会失败。请先运行 ',
+            h('code', 'python app.py'), '，然后访问 ',
+            h('a', {href: 'http://127.0.0.1:5000/'}, 'http://127.0.0.1:5000/'), '。'
+        ]), $('#file-tip-container'));
     }
 
     /* ---------------- 事件 ---------------- */
@@ -3948,35 +4091,9 @@
                 name: event.target.elements.namedItem('name').value.trim()
             });
         });
-        $('#detail-content').addEventListener('submit', event => {
-            const form = event.target.closest('[data-stall-food-types]');
-            if (!form) return;
-            event.preventDefault();
-            const id = Number(form.dataset.stallFoodTypes);
-            const types = event.submitter.value === 'auto' ? null : new FormData(form).getAll('food-type');
-            saveFoodTypeChange(event.submitter, `/api/admin/canteens/${id}/food-types`, 'PUT', {types}, id);
-        });
-        $('#photo-viewer-image').addEventListener('load', () => {
-            $('#photo-viewer-message').textContent = '';
-        });
-        $('#photo-viewer-image').addEventListener('error', () => {
-            if (viewerPhotos.length) $('#photo-viewer-message').textContent = '照片加载失败，请关闭后重试。';
-        });
         window.addEventListener('resize', () => {
             if (viewerPhotos.length) resizeViewerPhoto();
         });
-        $('#photo-viewer-stage').addEventListener('pointerdown', event => {
-            photoGesture = event.pointerType === 'touch' && viewerZoom === 1
-                ? { x: event.clientX, y: event.clientY } : null;
-        });
-        $('#photo-viewer-stage').addEventListener('pointerup', event => {
-            if (!photoGesture) return;
-            const dx = event.clientX - photoGesture.x;
-            const dy = event.clientY - photoGesture.y;
-            photoGesture = null;
-            if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) stepViewerPhoto(dx < 0 ? 1 : -1);
-        });
-        $('#photo-viewer-stage').addEventListener('pointercancel', () => { photoGesture = null; });
         $('#forum-kind-filter').addEventListener('change', () => loadForum());
         $('#forum-more').addEventListener('click', () => loadForum(true));
         $('#forum-more-replies').addEventListener('click', () => openForumThread(threadId, true));
@@ -4050,42 +4167,16 @@
             });
         }
 
-        const authForm = $('#auth-form');
-        if (authForm) authForm.addEventListener('submit', submitAuth);
-
         $$('.ranking-filters select').forEach(select => select.addEventListener('change', renderRanking));
         updateFoodTypeOptions();
         $('#random-food-dining').addEventListener('change', clearRandomFoodResult);
-        for (const selector of ['#stall-food-type', '#ranking-food-type', '#random-food-type']) {
-            const picker = $(selector);
-            const apply = () => {
-                updateFoodPickerSummary(picker);
-                if (selector === '#stall-food-type') {
-                    state.foodType = selectedFoodTypes(picker);
-                    renderCanteenGrid();
-                } else if (selector === '#ranking-food-type') {
-                    renderRanking();
-                } else {
-                    clearRandomFoodResult();
-                }
-            };
-            picker.addEventListener('click', event => {
-                const button = event.target.closest('.food-choice, .food-picker-clear');
-                if (!button) return;
-                if (button.matches('.food-choice')) {
-                    button.setAttribute('aria-pressed', String(button.getAttribute('aria-pressed') !== 'true'));
-                } else {
-                    $$('.food-choice', picker).forEach(choice => choice.setAttribute('aria-pressed', 'false'));
-                }
-                apply();
-            });
+        for (const picker of $$('#stall-food-type, #ranking-food-type, #random-food-type')) {
+            $('.food-picker-clear', picker).addEventListener('click', () => setFoodPickerSelection(picker, []));
         }
 
         const ratingForm = $('#rating-form');
         if (ratingForm) ratingForm.addEventListener('submit', submitRating);
 
-        const reportForm = $('#report-form');
-        if (reportForm) reportForm.addEventListener('submit', submitReport);
 
         const categoryForm = $('#add-category-form');
         if (categoryForm) categoryForm.addEventListener('submit', addCategory);
@@ -4110,7 +4201,6 @@
         });
 
         document.addEventListener('click', handleDocumentClick);
-        $('#auth-toggle').addEventListener('click', () => setAuthMode($('#auth-confirm').disabled));
         $('#nickname-btn').addEventListener('click', openNickname);
         $('#profile-avatar-input').addEventListener('change', event => {
             const photo = event.target.files[0];
@@ -4149,14 +4239,7 @@
         $('#rating-remove-photo').addEventListener('change', updateRatingPhotoPicker);
         $('#my-reviews-btn').addEventListener('click', openMyReviews);
         $('#nickname-form').addEventListener('submit', saveNickname);
-        $('#detail-content').addEventListener('submit', saveMenuChange);
-        $('#admin-category-list').addEventListener('submit', saveMenuChange);
-        $('#detail-content').addEventListener('change', event => {
-            const input = event.target;
-            if (input.matches('input[data-photo-kind]') && input.files[0]) {
-                updateDisplayPhoto(input, input.files[0]);
-            }
-        });
+        $('#admin-category-list').addEventListener('submit', saveCategoryName);
         document.addEventListener('keydown', handleModalKeys);
     }
 
@@ -4254,7 +4337,7 @@
             case 'recommendation-create':
                 ++recommendationRequest;
                 $('#recommendation-title').textContent = '新建清单';
-                $('#recommendation-content').innerHTML = recommendationForm();
+                Vue.render(recommendationForm(), $('#recommendation-content'));
                 openModal($('#recommendation-modal'));
                 break;
             case 'recommendation-add-stall':
@@ -4361,9 +4444,9 @@
                 if (state.token) {
                     selectMySection('my-public-profile');
                     const panel = $('#my-profile-panel');
-                    panel.textContent = '正在加载…';
+                    Vue.render(Vue.createTextVNode('正在加载…'), panel);
                     api('/api/profile').then(profile => openPublicProfile(profile.id, true))
-                        .catch(error => { panel.textContent = error.message; });
+                        .catch(error => Vue.render(Vue.createTextVNode(error.message), panel));
                 }
                 break;
             case 'profile-review-stall':
@@ -4381,9 +4464,6 @@
             }
             case 'withdraw-review':
                 if (id) withdrawReview(id, element);
-                break;
-            case 'remove-photo':
-                updateDisplayPhoto(element);
                 break;
             case 'toggle-category':
                 if (rawId !== undefined) toggleCategory(rawId);
@@ -4468,4 +4548,8 @@
                 break;
         }
     }
+    Vue.createApp({
+        render: () => Vue.h(window.CanteenShell),
+        mounted: init
+    }).mount('#canteen-app');
 })();

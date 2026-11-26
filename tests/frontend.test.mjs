@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { test } from 'node:test';
 import { chromium } from 'playwright';
@@ -20,6 +20,7 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
     const browser = await chromium.launch(process.env.BROWSER_EXECUTABLE ? { executablePath: process.env.BROWSER_EXECUTABLE } : {});
     t.after(() => browser.close());
     const coverage = libCoverage.createCoverageMap({});
+    const frontendFiles = (await readdir('canteen_frontend')).filter(file => file.endsWith('.js')).sort();
     async function scenario(name, actions) {
         await t.test(name, async () => {
             const page = await browser.newPage();
@@ -44,7 +45,7 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
             } finally {
                 for (const entry of await page.coverage.stopJSCoverage()) {
                     const file = basename(new URL(entry.url).pathname);
-                    if (!['app.js', 'config.js'].includes(file)) continue;
+                    if (!frontendFiles.includes(file)) continue;
                     const converter = v8toIstanbul(resolve('canteen_frontend', file), 0, { source: entry.source });
                     await converter.load();
                     converter.applyCoverage(entry.functions);
@@ -687,10 +688,27 @@ test('browser workflows and branch coverage', { timeout: 120_000 }, async t => {
         await page.locator('[data-campus-building="家属区（综合楼）"]').click();
         assert.equal(await page.locator('#campus-food-count').textContent(), '0 家');
     });
+    await scenario('MAP-01 Vue map shell preserves focus and edits shapes', async page => {
+        await page.route('**/api/maps/status', route => route.fulfill({json: {enabled: false, can_edit: true}}));
+        await page.route('**/api/maps/1', route => route.fulfill({json: {shapes: null}}));
+        await page.goto(new URL('/food-map.html', page.url()).href);
+        const shape = page.locator('#food-map-app #map [data-shape="stall-1"]');
+        await shape.waitFor();
+        assert.equal(await shape.evaluate(element => element.namespaceURI), 'http://www.w3.org/2000/svg');
+        await shape.focus();
+        await shape.press('Enter');
+        assert.equal(await shape.evaluate(element => element === document.activeElement), true);
+        assert.equal(await shape.locator('rect').getAttribute('stroke-width'), '3');
+        await page.locator('#edit').click();
+        await page.locator('#width').fill('220');
+        await page.locator('#width').press('Tab');
+        assert.equal(await shape.locator('rect').getAttribute('width'), '220');
+    });
     const summary = coverage.getCoverageSummary().toJSON();
     await mkdir('test-results', { recursive: true });
     await writeFile('test-results/frontend-coverage.json', JSON.stringify(coverage.toJSON(), null, 2));
     console.log('Frontend branches:', summary.branches);
-    assert.equal(coverage.files().length, 2, 'Both shipped frontend scripts must be measured');
+    assert.deepEqual(coverage.files().map(file => basename(file)).sort(), frontendFiles,
+        'Every first-party frontend script must be measured');
     assert.ok(summary.branches.covered * 100 >= summary.branches.total * 80, 'Frontend branch coverage must be at least 80%');
 });

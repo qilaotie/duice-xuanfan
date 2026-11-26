@@ -1660,7 +1660,7 @@ def admin_update_menu(item_id):
     except IntegrityError:
         db.session.rollback()
         return jsonify({"msg": "该档口已有同名菜品"}), 409
-    return jsonify({"msg": "操作成功"})
+    return jsonify(msg="操作成功", id=item.id, name=item.name) if add_dish else jsonify(msg="操作成功")
 
 
 @app.route("/api/admin/canteens/<int:canteen_id>", methods=["DELETE"])
